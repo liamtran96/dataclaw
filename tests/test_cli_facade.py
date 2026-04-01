@@ -284,3 +284,33 @@ class TestWorkflowGateMessages:
             "opencode",
         ]
         assert payload["next_command"] == "dataclaw config --source all"
+
+
+class TestHelpAndCommandOrdering:
+    def test_main_without_command_shows_help(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            "dataclaw.cli._run_export", lambda _args: (_ for _ in ()).throw(AssertionError("should not export"))
+        )
+        monkeypatch.setattr("sys.argv", ["dataclaw"])
+
+        main()
+
+        output = capsys.readouterr().out
+        assert "usage:" in output
+        assert "{status,update-skill,prep,config,list,export,confirm}" in output
+
+    def test_help_lists_commands_in_workflow_order(self, monkeypatch, capsys):
+        monkeypatch.setattr("sys.argv", ["dataclaw", "--help"])
+
+        with pytest.raises(SystemExit):
+            main()
+
+        output = capsys.readouterr().out
+        status_idx = output.index("status")
+        update_skill_idx = output.index("update-skill")
+        prep_idx = output.index("prep")
+        config_idx = output.index("config")
+        list_idx = output.index("list")
+        export_idx = output.index("export")
+        confirm_idx = output.index("confirm")
+        assert status_idx < update_skill_idx < prep_idx < config_idx < list_idx < export_idx < confirm_idx

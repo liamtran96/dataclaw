@@ -366,7 +366,7 @@ def run_export(
         sys.exit(1)
 
     print("=" * 50)
-    print("  DataClaw - Coding Agent Log Exporter")
+    print("  DataClaw: Coding Agent Logs -> Hugging Face")
     print("=" * 50)
 
     repo_id = args.repo or config.get("repo")
@@ -589,13 +589,54 @@ def main_impl(
     handle_config_fn,
     run_export_fn,
 ) -> None:
-    parser = argparse.ArgumentParser(description="DataClaw - Coding Agent Logs -> Hugging Face")
+    parser = argparse.ArgumentParser(description="DataClaw: Coding Agent Logs -> Hugging Face")
     sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("status", help="Show current stage and next steps")
+
+    us = sub.add_parser("update-skill", help="Install/update the dataclaw skill for a coding agent")
+    us.add_argument("target", choices=["claude"], help="Agent to install skill for")
 
     prep_parser = sub.add_parser("prep", help="Data prep - discover projects, detect HF, output JSON")
     prep_parser.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
-    sub.add_parser("status", help="Show current stage and next steps (JSON)")
-    cf = sub.add_parser("confirm", help="Scan for PII, summarize export, and unlock pushing (JSON)")
+
+    cfg = sub.add_parser("config", help="View or set config")
+    cfg.add_argument("--repo", type=str, help="Set HF repo")
+    cfg.add_argument(
+        "--source",
+        choices=sorted(EXPLICIT_SOURCE_CHOICES),
+        help=f"Set export source scope explicitly: {_source_scope_literals()}",
+    )
+    cfg.add_argument("--exclude", type=str, help="Comma-separated projects to exclude")
+    cfg.add_argument(
+        "--redact", type=str, help="Comma-separated strings to always redact (API keys, usernames, domains)"
+    )
+    cfg.add_argument(
+        "--redact-usernames", type=str, help="Comma-separated usernames to anonymize (GitHub handles, Discord names)"
+    )
+    cfg.add_argument(
+        "--confirm-projects", action="store_true", help="Mark project selection as confirmed (include all)"
+    )
+
+    list_parser = sub.add_parser("list", help="List all projects")
+    list_parser.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+
+    exp = sub.add_parser("export", help="Export locally or publish to Hugging Face")
+    exp.add_argument("--output", "-o", type=Path, default=None)
+    exp.add_argument("--repo", "-r", type=str, default=None)
+    exp.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
+    exp.add_argument("--all-projects", action="store_true")
+    exp.add_argument("--no-thinking", action="store_true")
+    exp.add_argument("--no-push", action="store_true")
+    exp.add_argument(
+        "--publish-attestation",
+        type=str,
+        default=None,
+        help="Required for push: text attestation that user explicitly approved publishing.",
+    )
+    exp.add_argument("--attest-user-approved-publish", action="store_true", help=argparse.SUPPRESS)
+
+    cf = sub.add_parser("confirm", help="Scan for PII, summarize export, and unlock pushing")
     cf.add_argument("--file", "-f", type=Path, default=None, help="Path to export JSONL file")
     cf.add_argument(
         "--full-name",
@@ -629,48 +670,12 @@ def main_impl(
     cf.add_argument("--attest-asked-sensitive", action="store_true", help=argparse.SUPPRESS)
     cf.add_argument("--attest-asked-manual-scan", action="store_true", help=argparse.SUPPRESS)
 
-    list_parser = sub.add_parser("list", help="List all projects")
-    list_parser.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
-
-    us = sub.add_parser("update-skill", help="Install/update the dataclaw skill for a coding agent")
-    us.add_argument("target", choices=["claude"], help="Agent to install skill for")
-
-    cfg = sub.add_parser("config", help="View or set config")
-    cfg.add_argument("--repo", type=str, help="Set HF repo")
-    cfg.add_argument(
-        "--source",
-        choices=sorted(EXPLICIT_SOURCE_CHOICES),
-        help=f"Set export source scope explicitly: {_source_scope_literals()}",
-    )
-    cfg.add_argument("--exclude", type=str, help="Comma-separated projects to exclude")
-    cfg.add_argument(
-        "--redact", type=str, help="Comma-separated strings to always redact (API keys, usernames, domains)"
-    )
-    cfg.add_argument(
-        "--redact-usernames", type=str, help="Comma-separated usernames to anonymize (GitHub handles, Discord names)"
-    )
-    cfg.add_argument(
-        "--confirm-projects", action="store_true", help="Mark project selection as confirmed (include all)"
-    )
-
-    exp = sub.add_parser("export", help="Export and push (default)")
-    for target in (exp, parser):
-        target.add_argument("--output", "-o", type=Path, default=None)
-        target.add_argument("--repo", "-r", type=str, default=None)
-        target.add_argument("--source", choices=SOURCE_CHOICES, default="auto")
-        target.add_argument("--all-projects", action="store_true")
-        target.add_argument("--no-thinking", action="store_true")
-        target.add_argument("--no-push", action="store_true")
-        target.add_argument(
-            "--publish-attestation",
-            type=str,
-            default=None,
-            help="Required for push: text attestation that user explicitly approved publishing.",
-        )
-        target.add_argument("--attest-user-approved-publish", action="store_true", help=argparse.SUPPRESS)
-
     args = parser.parse_args()
-    command = args.command or "export"
+    command = args.command
+
+    if command is None:
+        parser.print_help()
+        return
 
     if command == "prep":
         prep_fn(source_filter=args.source)
