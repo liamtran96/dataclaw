@@ -92,7 +92,7 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
         print(f"Logged in as: {user_info['name']}")
     except (OSError, KeyError, ValueError) as e:
         print(f"Error: Not logged in to Hugging Face ({e}).", file=sys.stderr)
-        print("Run: huggingface-cli login", file=sys.stderr)
+        print("Run: hf auth login --token <YOUR_TOKEN>", file=sys.stderr)
         sys.exit(1)
 
     print(f"Pushing to: {repo_id}")

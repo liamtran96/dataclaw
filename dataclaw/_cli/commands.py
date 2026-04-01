@@ -477,7 +477,7 @@ def run_export(
         return
 
     if not repo_id:
-        print("\nNo HF repo. Log in first: huggingface-cli login")
+        print("\nNo HF repo. Log in first: hf auth login --token YOUR_TOKEN")
         print("Then re-run dataclaw and it will auto-detect your username.")
         print(f"Or set manually: dataclaw config --repo {default_repo_name('username')}")
         print(f"\nLocal file: {output_path}")

@@ -207,7 +207,7 @@ def _build_status_next_steps(
         return (
             [
                 "Ask the user for their Hugging Face token. Sign up: https://huggingface.co/join — Create WRITE token: https://huggingface.co/settings/tokens",
-                "Run: huggingface-cli login --token <THEIR_TOKEN> (NEVER run bare huggingface-cli login — it hangs)",
+                "Run: hf auth login --token <THEIR_TOKEN> (NEVER run bare hf auth login when automating this with an agent — it hangs)",
                 'Run: dataclaw config --redact "<THEIR_TOKEN>" (so the token gets redacted from exports)',
                 "Run: dataclaw prep (to confirm login and get next steps)",
             ],
