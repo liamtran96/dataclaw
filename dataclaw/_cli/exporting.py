@@ -20,6 +20,32 @@ def _token_totals(stats: object) -> tuple[int, int]:
     return stats.get("input_tokens", 0), stats.get("output_tokens", 0)
 
 
+def _normalize_model_stats_key(key: object) -> str | None:
+    if not isinstance(key, str):
+        return None
+
+    key = key.strip()
+    if not key:
+        return None
+
+    return key.rsplit("/", 1)[-1]
+
+
+def _normalize_project_stats_key(key: object) -> str | None:
+    if not isinstance(key, str):
+        return None
+
+    key = key.strip()
+    if not key:
+        return None
+
+    if ":" in key:
+        key = key.split(":", 1)[1]
+
+    key = key.lower()
+    return key or None
+
+
 def _add_breakdown_row(
     breakdown: dict[str, dict[str, int]],
     key: object,
@@ -59,12 +85,10 @@ def export_to_jsonl(
     total = 0
     skipped = 0
     total_redactions = 0
-    models: dict[str, int] = {}
     model_breakdown: dict[str, dict[str, int]] = {}
     project_breakdown: dict[str, dict[str, int]] = {}
     total_input_tokens = 0
     total_output_tokens = 0
-    project_names = []
     seen_fingerprints: set[str] = set()
 
     try:
@@ -104,33 +128,28 @@ def export_to_jsonl(
                 f.write(b"\n")
                 total += 1
                 proj_count += 1
-                models[model] = models.get(model, 0) + 1
                 input_tokens, output_tokens = _token_totals(session.get("stats", {}))
                 total_input_tokens += input_tokens
                 total_output_tokens += output_tokens
                 _add_breakdown_row(
                     model_breakdown,
-                    model,
+                    _normalize_model_stats_key(model),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
                 _add_breakdown_row(
                     project_breakdown,
-                    session.get("project") or project["display_name"],
+                    _normalize_project_stats_key(session.get("project") or project["display_name"]),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
-            if proj_count:
-                project_names.append(project["display_name"])
             print(f" {proj_count} sessions")
 
     return {
         "sessions": total,
         "skipped": skipped,
         "redactions": total_redactions,
-        "models": models,
         "model_breakdown": model_breakdown,
-        "projects": project_names,
         "project_breakdown": project_breakdown,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
@@ -139,11 +158,8 @@ def export_to_jsonl(
 
 
 def summarize_export_jsonl(jsonl_path: Path) -> dict:
-    models: dict[str, int] = {}
     model_breakdown: dict[str, dict[str, int]] = {}
-    project_names: list[str] = []
     project_breakdown: dict[str, dict[str, int]] = {}
-    seen_projects: set[str] = set()
     total = 0
     total_input_tokens = 0
     total_output_tokens = 0
@@ -157,35 +173,27 @@ def summarize_export_jsonl(jsonl_path: Path) -> dict:
             total += 1
 
             model = row.get("model")
-            if isinstance(model, str) and model.strip():
-                models[model] = models.get(model, 0) + 1
-
             project = row.get("project")
-            if isinstance(project, str) and project not in seen_projects:
-                seen_projects.add(project)
-                project_names.append(project)
 
             input_tokens, output_tokens = _token_totals(row.get("stats", {}))
             total_input_tokens += input_tokens
             total_output_tokens += output_tokens
             _add_breakdown_row(
                 model_breakdown,
-                model,
+                _normalize_model_stats_key(model),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
             _add_breakdown_row(
                 project_breakdown,
-                project,
+                _normalize_project_stats_key(project),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
 
     return {
         "sessions": total,
-        "models": models,
         "model_breakdown": model_breakdown,
-        "projects": project_names,
         "project_breakdown": project_breakdown,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
@@ -193,23 +201,44 @@ def summarize_export_jsonl(jsonl_path: Path) -> dict:
     }
 
 
-def _fallback_breakdown(counts: object, names: object) -> dict[str, dict[str, int]]:
+def _normalize_breakdown(
+    raw_breakdown: object,
+    *,
+    normalize_key,
+) -> dict[str, dict[str, int]]:
+    if not isinstance(raw_breakdown, dict):
+        return {}
+
+    normalized: dict[str, dict[str, int]] = {}
+    for name, stats in raw_breakdown.items():
+        normalized_name = normalize_key(name)
+        if normalized_name is None or not isinstance(stats, dict):
+            continue
+        row = normalized.setdefault(normalized_name, {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
+        row["sessions"] += stats.get("sessions", 0)
+        row["input_tokens"] += stats.get("input_tokens", 0)
+        row["output_tokens"] += stats.get("output_tokens", 0)
+
+    return normalized
+
+
+def _fallback_breakdown(counts: object, names: object, *, normalize_key) -> dict[str, dict[str, int]]:
     breakdown: dict[str, dict[str, int]] = {}
 
     if isinstance(counts, dict):
         for name, sessions in counts.items():
-            if isinstance(name, str) and name.strip():
-                breakdown[name] = {
-                    "sessions": sessions if isinstance(sessions, int) else 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                }
+            normalized_name = normalize_key(name)
+            if normalized_name is None:
+                continue
+            row = breakdown.setdefault(normalized_name, {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
+            row["sessions"] += sessions if isinstance(sessions, int) else 0
         return breakdown
 
     if isinstance(names, list):
         for name in names:
-            if isinstance(name, str) and name.strip():
-                breakdown[name] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0}
+            normalized_name = normalize_key(name)
+            if normalized_name is not None:
+                breakdown.setdefault(normalized_name, {"sessions": 0, "input_tokens": 0, "output_tokens": 0})
 
     return breakdown
 
@@ -305,11 +334,13 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
 
 
 def _build_dataset_card(repo_id: str, meta: dict) -> str:
-    models = meta.get("models", {})
     sessions = meta.get("sessions", 0)
-    projects = meta.get("projects", [])
-    model_breakdown = meta.get("model_breakdown") or _fallback_breakdown(models, None)
-    project_breakdown = meta.get("project_breakdown") or _fallback_breakdown(None, projects)
+    model_breakdown = _normalize_breakdown(meta.get("model_breakdown"), normalize_key=_normalize_model_stats_key)
+    if not model_breakdown:
+        model_breakdown = _fallback_breakdown(meta.get("models"), None, normalize_key=_normalize_model_stats_key)
+    project_breakdown = _normalize_breakdown(meta.get("project_breakdown"), normalize_key=_normalize_project_stats_key)
+    if not project_breakdown:
+        project_breakdown = _fallback_breakdown(None, meta.get("projects"), normalize_key=_normalize_project_stats_key)
     total_input = meta.get("total_input_tokens", 0)
     total_output = meta.get("total_output_tokens", 0)
     timestamp = meta.get("exported_at", "")[:10]
@@ -351,7 +382,7 @@ Exported with [DataClaw]({REPO_URL}).
 | Metric | Value |
 |--------|-------|
 | Sessions | {sessions} |
-| Projects | {len(projects)} |
+| Projects | {len(project_breakdown)} |
 | Input tokens | {_format_token_count(total_input)} |
 | Output tokens | {_format_token_count(total_output)} |
 | Last updated | {timestamp} |

@@ -511,14 +511,24 @@ def run_export(
         print(f"Skipped {meta['skipped']} abandoned/error sessions")
     if meta.get("redactions"):
         print(f"Redacted {meta['redactions']} secrets (API keys, tokens, emails, etc.)")
-    print(f"Models: {', '.join(f'{m} ({c})' for m, c in sorted(meta['models'].items(), key=lambda x: -x[1]))}")
+    model_breakdown = meta.get("model_breakdown", {})
+    if model_breakdown:
+        print(
+            "Models: "
+            + ", ".join(
+                f"{model} ({stats['sessions']})"
+                for model, stats in sorted(
+                    model_breakdown.items(),
+                    key=lambda item: (-item[1].get("sessions", 0), item[0]),
+                )
+            )
+        )
 
     _print_pii_guidance(output_path, REPO_URL)
 
     config["last_export"] = {
         "timestamp": meta["exported_at"],
         "sessions": meta["sessions"],
-        "models": meta["models"],
         "source": source_choice,
     }
     if args.no_push:
