@@ -249,27 +249,37 @@ Exported with [DataClaw]({REPO_URL}).
 
 ## Schema
 
-Each line in `conversations.jsonl` is one conversation session:
+Each line in `conversations.jsonl` is one session:
 
 ```json
 {{
-  "session_id": "uuid",
+  "session_id": "abc-123",
   "project": "my-project",
-  "model": "gpt-5.3-codex",
+  "model": "claude-opus-4-6",
   "git_branch": "main",
-  "start_time": "2025-01-15T10:00:00+00:00",
-  "end_time": "2025-01-15T10:30:00+00:00",
+  "start_time": "2025-06-15T10:00:00+00:00",
+  "end_time": "2025-06-15T10:30:00+00:00",
   "messages": [
-    {{"role": "user", "content": "Fix the login bug", "timestamp": "..."}},
+    {{
+      "role": "user",
+      "content": "Fix the login bug",
+      "content_parts": [
+        {{"type": "image", "source": {{"type": "base64", "media_type": "image/png", "data": "..."}}}}
+      ],
+      "timestamp": "..."
+    }},
     {{
       "role": "assistant",
       "content": "I'll investigate the login flow.",
-      "thinking": "The user wants me to...",
+      "thinking": "The user wants me to look at...",
       "tool_uses": [
           {{
             "tool": "bash",
             "input": {{"command": "grep -r 'login' src/"}},
-            "output": {{"text": "src/auth.py:42: def login(user, password):"}},
+            "output": {{
+              "text": "src/auth.py:42: def login(user, password):",
+              "raw": {{"stderr": "", "interrupted": false}}
+            }},
             "status": "success"
           }}
         ],
@@ -277,18 +287,15 @@ Each line in `conversations.jsonl` is one conversation session:
     }}
   ],
   "stats": {{
-    "user_messages": 5,
-    "assistant_messages": 8,
-    "tool_uses": 20,
-    "input_tokens": 50000,
-    "output_tokens": 3000
+    "user_messages": 5, "assistant_messages": 8,
+    "tool_uses": 20, "input_tokens": 50000, "output_tokens": 3000
   }}
 }}
 ```
 
-### Privacy
+`messages[].content_parts` is optional and preserves structured user content such as attachments when the source provides them. The canonical human-readable user text remains in `messages[].content`.
 
-- Paths anonymized to project-relative; usernames hashed
+`tool_uses[].output.raw` is optional and preserves extra structured tool-result fields when the source provides them. The canonical human-readable result text remains in `tool_uses[].output.text`.
 
 ## Load
 
