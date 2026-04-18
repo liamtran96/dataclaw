@@ -42,6 +42,7 @@ def sample_assistant_entry():
                 "input_tokens": 500,
                 "output_tokens": 100,
                 "cache_read_input_tokens": 200,
+                "cache_creation_input_tokens": 50,
             },
         },
     }

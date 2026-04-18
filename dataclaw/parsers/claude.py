@@ -15,6 +15,7 @@ from .common import (
     make_stats,
     normalize_timestamp,
     parse_tool_input,
+    safe_int,
     update_time_bounds,
 )
 
@@ -522,11 +523,12 @@ def process_entry(
             usage = entry.get("message", {}).get("usage", {})
             if not isinstance(usage, dict):
                 usage = {}
-            stats["input_tokens"] += usage.get("input_tokens", 0) + usage.get(
-                "cache_read_input_tokens",
-                0,
+            stats["input_tokens"] += (
+                safe_int(usage.get("input_tokens"))
+                + safe_int(usage.get("cache_read_input_tokens"))
+                + safe_int(usage.get("cache_creation_input_tokens"))
             )
-            stats["output_tokens"] += usage.get("output_tokens", 0)
+            stats["output_tokens"] += safe_int(usage.get("output_tokens"))
             stats["tool_uses"] += len(msg.get("tool_uses", []))
             msg["timestamp"] = timestamp
             messages.append(msg)

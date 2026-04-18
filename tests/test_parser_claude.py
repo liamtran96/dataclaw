@@ -240,7 +240,7 @@ class TestProcessEntry:
         assert len(messages) == 1
         assert messages[0]["role"] == "assistant"
         assert stats["assistant_messages"] == 1
-        assert stats["input_tokens"] > 0
+        assert stats["input_tokens"] == 750
         assert stats["output_tokens"] > 0
 
     def test_unknown_type(self, mock_anonymizer):
