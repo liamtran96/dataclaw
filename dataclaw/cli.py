@@ -149,7 +149,7 @@ def _run_diff_jsonl(args) -> None:
 
 
 def main() -> None:
-    if not sys.flags.utf8_mode and "pytest" not in sys.modules:
+    if not getattr(sys, "frozen", False) and not sys.flags.utf8_mode and "pytest" not in sys.modules:
         os.environ["PYTHONUTF8"] = "1"
         ret = subprocess.run([sys.executable, "-m", "dataclaw.cli"] + sys.argv[1:]).returncode
         sys.exit(ret)

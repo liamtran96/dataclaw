@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ARCH="${1:-$(uname -m)}"
+PYTHON_BIN="${PYTHON:-python}"
 
-python -m PyInstaller pyinstaller.spec --clean --noconfirm
+"${PYTHON_BIN}" -m PyInstaller pyinstaller.spec --clean --noconfirm
 
 case "${ARCH}" in
   arm64|aarch64)
