@@ -68,7 +68,7 @@ def test_tauri_conf_has_updater_plugin():
     conf = json.loads(read("app/src-tauri/tauri.conf.json"))
     updater = conf["plugins"]["updater"]
     assert updater["active"] is True
-    assert "https://github.com/banodoco/dataclaw/releases/latest/download/latest.json" in updater[
+    assert "https://github.com/peteromallet/dataclaw/releases/latest/download/latest.json" in updater[
         "endpoints"
     ]
     assert updater["pubkey"]
@@ -88,6 +88,22 @@ def test_app_versions_match_python_package():
     assert package_json["version"] == py_version
     assert tauri_conf["version"] == py_version
     assert cargo_version == py_version
+
+
+def test_release_yml_uploads_stable_dmg_names():
+    text = read(".github/workflows/release.yml")
+    assert "DataClaw-macOS-Apple-Silicon.dmg" in text
+    assert "DataClaw-macOS-Intel.dmg" in text
+    assert "gh release edit \"$TAG\" --notes-file RELEASE_NOTES.md" in text
+    assert "gh release create \"$TAG\" \"${ASSETS[@]}\" --notes-file RELEASE_NOTES.md" in text
+
+
+def test_latest_json_uses_semver_with_tag_download_url():
+    text = read("scripts/build-latest-json.sh")
+    assert 'if version.startswith("v"):' in text
+    assert "version = version[1:]" in text
+    assert 'release_tag = os.environ["RELEASE_TAG"]' in text
+    assert "releases/download/{release_tag}" in text
 
 
 def test_tauri_conf_creates_updater_artifacts():

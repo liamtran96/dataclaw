@@ -12,9 +12,13 @@ Every export is tagged **`dataclaw`** on Hugging Face. Together, they may someda
 
 ### Mac app
 
-Download the latest signed macOS installer from [GitHub Releases](https://github.com/banodoco/dataclaw/releases/latest).
+Download the app:
 
-Choose the Apple Silicon `.dmg` for M-series Macs, or the Intel `.dmg` for older Intel Macs. Open the `.dmg`, drag `DataClaw.app` to Applications, then launch DataClaw from Applications or Spotlight.
+1. [Download DataClaw for Mac](https://github.com/peteromallet/dataclaw/releases/latest/download/DataClaw-macOS-Apple-Silicon.dmg) for Apple Silicon MacBooks and desktop Macs.
+2. Open the DMG and drag `DataClaw.app` to Applications.
+3. Launch DataClaw from Applications or Spotlight.
+
+Using an older Intel Mac? Download [DataClaw for Intel Macs](https://github.com/peteromallet/dataclaw/releases/latest/download/DataClaw-macOS-Intel.dmg). All release assets are also available on [GitHub Releases](https://github.com/peteromallet/dataclaw/releases/latest).
 
 The Mac app bundles the DataClaw sidecar, so users do not need to install Python, PyInstaller, or the CLI separately. Releases are signed, notarized, and configured for in-app updates through GitHub Releases.
 
@@ -36,7 +40,7 @@ Install it, then walk me through the process.
 
 STEP 1 - INSTALL
   pip install -U dataclaw
-  If that fails: git clone https://github.com/banodoco/dataclaw.git /tmp/dataclaw && pip install -U /tmp/dataclaw
+  If that fails: git clone https://github.com/peteromallet/dataclaw.git /tmp/dataclaw && pip install -U /tmp/dataclaw
   If that also fails, ask the user where the source is.
 
 STEP 2 - INSTALL SKILL
@@ -188,7 +192,7 @@ We recommend converting the exported jsonl into human-readable yaml using `datac
 then use tools such as [trufflehog](https://github.com/trufflesecurity/trufflehog) and [gitleaks](https://github.com/gitleaks/gitleaks) to scan it.
 You can also compare the exported jsonl with a previous baseline using `dataclaw diff-jsonl`.
 
-To help improve redaction, report issues: https://github.com/banodoco/dataclaw/issues
+To help improve redaction, report issues: https://github.com/peteromallet/dataclaw/issues
 
 ### Data schema
 

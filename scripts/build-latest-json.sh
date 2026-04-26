@@ -38,8 +38,11 @@ import os
 from datetime import datetime, timezone
 
 version = os.environ["VERSION"]
+if version.startswith("v"):
+    version = version[1:]
+release_tag = os.environ["RELEASE_TAG"]
 pub_date = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-base_url = f"https://github.com/banodoco/dataclaw/releases/download/{version}"
+base_url = f"https://github.com/peteromallet/dataclaw/releases/download/{release_tag}"
 
 payload = {
     "version": version,

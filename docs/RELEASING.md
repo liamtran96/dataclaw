@@ -98,17 +98,19 @@ Create these repository secrets before pushing a release tag.
 APPLE_SIGNING_IDENTITY="" pnpm -C app tauri build
 ```
 
-2. Create and push a release tag.
+2. Confirm `pyproject.toml`, `app/package.json`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/src-tauri/Cargo.lock`, `CHANGELOG.md`, and `RELEASE_NOTES.md` have all been updated for the release version.
+
+3. Create and push a release tag.
 
 ```sh
-git tag v0.4.0
+git tag v0.4.2
 git push --tags
 ```
 
-3. GitHub Actions runs `.github/workflows/release.yml`.
-4. The release workflow builds on `macos-14` for `aarch64-apple-darwin` and `macos-13` for `x86_64-apple-darwin`.
-5. Signing and notarization happen only for tagged releases. Pull requests run unsigned builds.
-6. The workflow uploads the `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, and signed `latest.json` release assets.
+4. GitHub Actions runs `.github/workflows/release.yml`.
+5. The release workflow builds on `macos-14` for `aarch64-apple-darwin` and `macos-13` for `x86_64-apple-darwin`.
+6. Signing and notarization happen only for tagged releases. Pull requests run unsigned builds.
+7. The workflow uploads stable direct-download DMGs, `.app.tar.gz`, `.app.tar.gz.sig`, and signed `latest.json` release assets.
 
 ## 7. Verify the release manually
 

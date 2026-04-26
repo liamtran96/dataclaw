@@ -6,8 +6,8 @@ from ..config import DataClawConfig
 from ..providers import PROVIDERS
 
 HF_TAG = "dataclaw"
-REPO_URL = "https://github.com/banodoco/dataclaw"
-SKILL_URL = "https://raw.githubusercontent.com/banodoco/dataclaw/main/.claude/skills/dataclaw/SKILL.md"
+REPO_URL = "https://github.com/peteromallet/dataclaw"
+SKILL_URL = "https://raw.githubusercontent.com/peteromallet/dataclaw/main/.claude/skills/dataclaw/SKILL.md"
 
 REQUIRED_REVIEW_ATTESTATIONS: dict[str, str] = {
     "asked_full_name": "I asked the user for their full name and scanned for it.",

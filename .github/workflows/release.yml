@@ -135,6 +135,16 @@ jobs:
           export ARM64_TARBALL ARM64_SIG X86_TARBALL X86_SIG
           scripts/build-latest-json.sh > latest.json
 
+      - name: Normalize DMG asset names
+        run: |
+          set -euo pipefail
+          ARM64_DMG="$(find artifacts/dataclaw-aarch64-apple-darwin -name '*.dmg' -print -quit)"
+          X86_DMG="$(find artifacts/dataclaw-x86_64-apple-darwin -name '*.dmg' -print -quit)"
+          test -n "$ARM64_DMG"
+          test -n "$X86_DMG"
+          mv "$ARM64_DMG" artifacts/DataClaw-macOS-Apple-Silicon.dmg
+          mv "$X86_DMG" artifacts/DataClaw-macOS-Intel.dmg
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -144,7 +154,8 @@ jobs:
           mapfile -t ASSETS < <(find artifacts -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) | sort)
           ASSETS+=(latest.json)
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file RELEASE_NOTES.md
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            gh release create "$TAG" "${ASSETS[@]}" --generate-notes
+            gh release create "$TAG" "${ASSETS[@]}" --notes-file RELEASE_NOTES.md
           fi

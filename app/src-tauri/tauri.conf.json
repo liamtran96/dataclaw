@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DataClaw",
   "identifier": "io.dataclaw.desktop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -42,7 +42,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/banodoco/dataclaw/releases/latest/download/latest.json"
+        "https://github.com/peteromallet/dataclaw/releases/latest/download/latest.json"
       ],
       "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0NjY4NDZDM0NBQTQ5RgpSV1NmcE1yRFJtaEdCdlFvMllYY05FRTdZb2NrSGMvUjJ0dU5TV0hrNFhNZTZjQUtmUTlGUUNlUAo="
