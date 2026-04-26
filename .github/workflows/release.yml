@@ -19,9 +19,6 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             arch: arm64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -182,24 +179,19 @@ jobs:
           set -euo pipefail
           ARM64_TARBALL="$(find artifacts/dataclaw-aarch64-apple-darwin -name '*.app.tar.gz' -print -quit)"
           ARM64_SIG="$(find artifacts/dataclaw-aarch64-apple-darwin -name '*.app.tar.gz.sig' -print -quit)"
-          X86_TARBALL="$(find artifacts/dataclaw-x86_64-apple-darwin -name '*.app.tar.gz' -print -quit)"
-          X86_SIG="$(find artifacts/dataclaw-x86_64-apple-darwin -name '*.app.tar.gz.sig' -print -quit)"
-          if [[ -z "$ARM64_TARBALL" || -z "$ARM64_SIG" || -z "$X86_TARBALL" || -z "$X86_SIG" ]]; then
-            echo "Skipping latest.json because updater artifacts were not produced by unsigned builds."
+          if [[ -z "$ARM64_TARBALL" || -z "$ARM64_SIG" ]]; then
+            echo "Skipping latest.json because updater artifacts were not produced."
             exit 0
           fi
-          export ARM64_TARBALL ARM64_SIG X86_TARBALL X86_SIG
+          export ARM64_TARBALL ARM64_SIG
           scripts/build-latest-json.sh > latest.json
 
       - name: Normalize DMG asset names
         run: |
           set -euo pipefail
           ARM64_DMG="$(find artifacts/dataclaw-aarch64-apple-darwin -name '*.dmg' -print -quit)"
-          X86_DMG="$(find artifacts/dataclaw-x86_64-apple-darwin -name '*.dmg' -print -quit)"
           test -n "$ARM64_DMG"
-          test -n "$X86_DMG"
           mv "$ARM64_DMG" artifacts/DataClaw-macOS-Apple-Silicon.dmg
-          mv "$X86_DMG" artifacts/DataClaw-macOS-Intel.dmg
 
       - name: Publish GitHub release
         env:

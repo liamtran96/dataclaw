@@ -51,7 +51,7 @@ def test_release_yml_falls_back_to_unsigned_dmg_builds():
     assert "if: steps.signing.outputs.signed != 'true'" in text
     assert 'APPLE_SIGNING_IDENTITY: "-"' in text
     assert "--config '{\"bundle\":{\"createUpdaterArtifacts\":false}" in text
-    assert "Skipping latest.json because updater artifacts were not produced by unsigned builds." in text
+    assert "Skipping latest.json because updater artifacts were not produced." in text
     assert "if [[ -f latest.json ]]; then" in text
 
 
@@ -62,11 +62,7 @@ def test_release_yml_matrix_has_explicit_targets():
         text,
         re.MULTILINE,
     )
-    assert re.search(
-        r"os:\s*macos-13\s+target:\s*x86_64-apple-darwin\s+arch:\s*x86_64",
-        text,
-        re.MULTILINE,
-    )
+    assert "target: x86_64-apple-darwin" not in text
     assert "pnpm -C app tauri build --target ${{ matrix.target }}" in text
 
 
@@ -106,7 +102,6 @@ def test_app_versions_match_python_package():
 def test_release_yml_uploads_stable_dmg_names():
     text = read(".github/workflows/release.yml")
     assert "DataClaw-macOS-Apple-Silicon.dmg" in text
-    assert "DataClaw-macOS-Intel.dmg" in text
     assert "gh release edit \"$TAG\" --notes-file RELEASE_NOTES.md" in text
     assert "gh release create \"$TAG\" \"${ASSETS[@]}\" --notes-file RELEASE_NOTES.md" in text
 
@@ -117,6 +112,7 @@ def test_latest_json_uses_semver_with_tag_download_url():
     assert "version = version[1:]" in text
     assert 'release_tag = os.environ["RELEASE_TAG"]' in text
     assert "releases/download/{release_tag}" in text
+    assert 'platforms["darwin-x86_64"]' in text
 
 
 def test_tauri_conf_creates_updater_artifacts():

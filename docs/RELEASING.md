@@ -108,7 +108,7 @@ git push --tags
 ```
 
 4. GitHub Actions runs `.github/workflows/release.yml`.
-5. The release workflow builds on `macos-14` for `aarch64-apple-darwin` and `macos-13` for `x86_64-apple-darwin`.
+5. The release workflow builds on `macos-14` for `aarch64-apple-darwin`.
 6. Signing and notarization happen only for tagged releases. Pull requests run unsigned builds.
 7. The workflow uploads stable direct-download DMGs, `.app.tar.gz`, `.app.tar.gz.sig`, and signed `latest.json` release assets.
 

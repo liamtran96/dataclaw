@@ -18,7 +18,7 @@ Download the app:
 2. Open the DMG and drag `DataClaw.app` to Applications.
 3. Launch DataClaw from Applications or Spotlight.
 
-Using an older Intel Mac? Download [DataClaw for Intel Macs](https://github.com/peteromallet/dataclaw/releases/latest/download/DataClaw-macOS-Intel.dmg). All release assets are also available on [GitHub Releases](https://github.com/peteromallet/dataclaw/releases/latest).
+All release assets are also available on [GitHub Releases](https://github.com/peteromallet/dataclaw/releases/latest). Intel Mac users can use the CLI install for now.
 
 The Mac app bundles the DataClaw sidecar, so users do not need to install Python, PyInstaller, or the CLI separately. Releases are signed, notarized, and configured for in-app updates through GitHub Releases.
 
