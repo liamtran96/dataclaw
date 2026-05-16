@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import IO, Any
+from typing import IO, Any, Literal
 
 import orjson
 
 JSONDecodeError = orjson.JSONDecodeError
 
+Indent = Literal[None, 2]
 
-def _dump_option(indent: int | None) -> int:
+
+def _dump_option(indent: Indent) -> int:
     if indent is None:
         return 0
     if indent != 2:
@@ -17,17 +19,17 @@ def _dump_option(indent: int | None) -> int:
     return orjson.OPT_INDENT_2
 
 
-def dumps_bytes(obj: Any, *, indent: int | None = None) -> bytes:
+def dumps_bytes(obj: Any, *, indent: Indent = None) -> bytes:
     return orjson.dumps(obj, option=_dump_option(indent))
 
 
-def dumps(obj: Any, *, indent: int | None = None, ensure_ascii: bool = False) -> str:
+def dumps(obj: Any, *, indent: Indent = None, ensure_ascii: bool = False) -> str:
     if ensure_ascii:
         raise TypeError("ensure_ascii=True is not supported")
     return dumps_bytes(obj, indent=indent).decode("utf-8")
 
 
-def dump(obj: Any, fp: IO[str], *, indent: int | None = None, ensure_ascii: bool = False) -> None:
+def dump(obj: Any, fp: IO[str], *, indent: Indent = None, ensure_ascii: bool = False) -> None:
     fp.write(dumps(obj, indent=indent, ensure_ascii=ensure_ascii))
 
 

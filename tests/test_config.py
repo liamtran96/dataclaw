@@ -20,13 +20,12 @@ class TestLoadConfig:
         # Defaults still present
         assert "excluded_projects" in config
 
-    def test_corrupt_json_returns_defaults(self, tmp_config, capsys):
+    def test_corrupt_json_returns_defaults(self, tmp_config, caplog):
         tmp_config.parent.mkdir(parents=True, exist_ok=True)
         tmp_config.write_text("not valid json {{{")
         config = load_config()
         assert config["repo"] is None
-        captured = capsys.readouterr()
-        assert "Warning" in captured.err
+        assert "Could not read" in caplog.text
 
     def test_extra_keys_preserved(self, tmp_config):
         tmp_config.parent.mkdir(parents=True, exist_ok=True)
@@ -49,7 +48,7 @@ class TestSaveConfig:
         data = json.loads(tmp_config.read_text())
         assert data["repo"] == "new"
 
-    def test_oserror_prints_warning(self, tmp_config, monkeypatch, capsys):
+    def test_oserror_prints_warning(self, tmp_config, monkeypatch, caplog):
         # Make the directory unwritable
         monkeypatch.setattr(
             "dataclaw.config.CONFIG_DIR",
@@ -61,5 +60,4 @@ class TestSaveConfig:
 
         monkeypatch.setattr(type(tmp_config.parent), "mkdir", failing_mkdir)
         save_config({"repo": "test"})
-        captured = capsys.readouterr()
-        assert "Warning" in captured.err
+        assert "Could not save" in caplog.text

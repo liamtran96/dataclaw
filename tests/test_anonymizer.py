@@ -4,7 +4,6 @@ from dataclaw.anonymizer import (
     Anonymizer,
     _hash_username,
     _replace_username,
-    anonymize_path,
     anonymize_text,
 )
 
@@ -29,20 +28,20 @@ class TestHashUsername:
         assert all(c in "0123456789abcdef" for c in suffix)
 
 
-# --- anonymize_path ---
+# --- anonymize_text (paths) ---
 
 
-class TestAnonymizePath:
+class TestAnonymizeTextPaths:
     def test_empty_path(self):
-        assert anonymize_path("", "alice", "user_abc12345") == ""
+        assert anonymize_text("", "alice", "user_abc12345") == ""
 
     def test_global_replace(self):
         # if username is >= 4 chars, username is hashed using global replace
-        result = anonymize_path("/Users/alice/something", "alice", "user_abc12345")
+        result = anonymize_text("/Users/alice/something", "alice", "user_abc12345")
         assert result == "/Users/user_abc12345/something"
 
     def test_bare_home_hashed(self):
-        result = anonymize_path(
+        result = anonymize_text(
             "/Users/s/somedir/file.py",
             "s",
             "user_abc12345",
@@ -51,7 +50,7 @@ class TestAnonymizePath:
         assert result == "/Users/user_abc12345/somedir/file.py"
 
     def test_linux_home_path(self):
-        result = anonymize_path(
+        result = anonymize_text(
             "/home/s/Documents/project/file.py",
             "s",
             "user_abc12345",
@@ -60,7 +59,7 @@ class TestAnonymizePath:
         assert result == "/home/user_abc12345/Documents/project/file.py"
 
     def test_path_not_under_home(self):
-        result = anonymize_path(
+        result = anonymize_text(
             "/var/log/syslog",
             "s",
             "user_abc12345",
@@ -69,7 +68,7 @@ class TestAnonymizePath:
         assert result == "/var/log/syslog"
 
     def test_windows_users_path(self):
-        result = anonymize_path(
+        result = anonymize_text(
             r"C:\Users\bob\Documents\file.txt",
             "bob",
             "user_abc12345",
@@ -77,7 +76,7 @@ class TestAnonymizePath:
         assert result == r"C:\Users\user_abc12345\Documents\file.txt"
 
     def test_windows_users_path_double_backslashes(self):
-        result = anonymize_path(
+        result = anonymize_text(
             r"\\Users\\bob\\Documents\\file.txt",
             "bob",
             "user_abc12345",
@@ -85,7 +84,7 @@ class TestAnonymizePath:
         assert result == r"\\Users\\user_abc12345\\Documents\\file.txt"
 
     def test_windows_custom_home_path(self):
-        result = anonymize_path(
+        result = anonymize_text(
             "C:\\custom_home\\bob\\project\\file.py",
             "bob",
             "user_abc12345",
@@ -94,7 +93,7 @@ class TestAnonymizePath:
         assert result == "C:\\custom_home\\user_abc12345\\project\\file.py"
 
     def test_msys2_custom_home_path(self):
-        result = anonymize_path(
+        result = anonymize_text(
             "/c/custom_home/bob/project/file.py",
             "bob",
             "user_abc12345",
@@ -180,7 +179,7 @@ class TestAnonymizeText:
 
 class TestAnonymizer:
     def test_path_method(self, mock_anonymizer):
-        result = mock_anonymizer.path("/Users/testuser/Documents/myproject/main.py")
+        result = mock_anonymizer.text("/Users/testuser/Documents/myproject/main.py")
         assert "testuser" not in result
         assert "myproject/main.py" in result
 
@@ -189,8 +188,8 @@ class TestAnonymizer:
         assert "testuser" not in result
 
     def test_deterministic_hash(self, mock_anonymizer):
-        r1 = mock_anonymizer.path("/Users/testuser/Documents/proj/a.py")
-        r2 = mock_anonymizer.path("/Users/testuser/Documents/proj/a.py")
+        r1 = mock_anonymizer.text("/Users/testuser/Documents/proj/a.py")
+        r2 = mock_anonymizer.text("/Users/testuser/Documents/proj/a.py")
         assert r1 == r2
 
     def test_extra_usernames(self, monkeypatch):

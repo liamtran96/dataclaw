@@ -78,7 +78,12 @@ def build_export_session_tasks(project_index: int, project: dict) -> list[Export
     tasks: list[ExportSessionTask] = []
     task_index = 0
     for jsonl_file in sorted(project_path.glob("*.jsonl")):
-        with open(jsonl_file, "rb") as fh:
+        try:
+            fh = open(jsonl_file, "rb")
+        except OSError as e:
+            logger.warning("custom: failed to open %s: %s", jsonl_file, e)
+            continue
+        with fh:
             while True:
                 offset = fh.tell()
                 line = fh.readline()
@@ -112,9 +117,13 @@ def parse_export_session_task(
     del include_thinking
     if not task.file_path or task.length <= 0:
         return None
-    with open(task.file_path, "rb") as fh:
-        fh.seek(task.offset)
-        line = fh.read(task.length)
+    try:
+        with open(task.file_path, "rb") as fh:
+            fh.seek(task.offset)
+            line = fh.read(task.length)
+    except OSError as e:
+        logger.warning("custom: failed to read %s: %s", task.file_path, e)
+        return None
     return parse_session_bytes(task.project_dir_name, line, anonymizer)
 
 
@@ -141,7 +150,8 @@ def parse_session_bytes(project_dir_name: str, raw_line: bytes | str, anonymizer
 
     try:
         session = json.loads(line)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.warning("custom:%s: malformed JSON line: %s", project_dir_name, e)
         return None
 
     if not isinstance(session, dict):

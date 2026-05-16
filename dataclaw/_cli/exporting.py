@@ -4,6 +4,7 @@ import hashlib
 import heapq
 import os
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -20,7 +21,17 @@ from ..parser import iter_project_sessions
 from ..providers import get_provider_non_anon_string_keys
 from ..secrets import transform_session
 from ..session_tasks import ExportSessionTask, build_export_session_tasks, parse_export_session_task
-from .common import HF_TAG, REPO_URL, SKILL_URL, _format_token_count, _provider_dataset_tags
+from .common import (
+    HF_TAG,
+    REPO_URL,
+    SKILL_URL,
+    _format_token_count,
+    _provider_dataset_tags,
+    emit_blocked_error,
+    format_elapsed_seconds,
+    hf_browse_tagged_url,
+    hf_dataset_url,
+)
 
 
 def _token_totals(stats: object) -> tuple[int, int]:
@@ -29,39 +40,28 @@ def _token_totals(stats: object) -> tuple[int, int]:
     return stats.get("input_tokens", 0), stats.get("output_tokens", 0)
 
 
-def _format_elapsed_seconds(seconds: float) -> str:
-    return f"{seconds:.2f}s"
+def _normalize_stats_key(key: object, *, strip_after: str | None = None, lowercase: bool = False) -> str | None:
+    if not isinstance(key, str):
+        return None
+
+    key = key.strip()
+    if not key:
+        return None
+
+    if strip_after is not None and strip_after in key:
+        key = key.split(strip_after, 1)[1] if strip_after == ":" else key.rsplit(strip_after, 1)[-1]
+    if lowercase:
+        key = key.lower()
+    key = key.replace("_", "-").replace(".", "-")
+    return key or None
 
 
 def _normalize_model_stats_key(key: object) -> str | None:
-    if not isinstance(key, str):
-        return None
-
-    key = key.strip()
-    if not key:
-        return None
-
-    key = key.rsplit("/", 1)[-1]
-    key = key.replace("_", "-")
-    key = key.replace(".", "-")
-    return key
+    return _normalize_stats_key(key, strip_after="/")
 
 
 def _normalize_project_stats_key(key: object) -> str | None:
-    if not isinstance(key, str):
-        return None
-
-    key = key.strip()
-    if not key:
-        return None
-
-    if ":" in key:
-        key = key.split(":", 1)[1]
-
-    key = key.lower()
-    key = key.replace("_", "-")
-    key = key.replace(".", "-")
-    return key or None
+    return _normalize_stats_key(key, strip_after=":", lowercase=True)
 
 
 def _add_breakdown_row(
@@ -247,7 +247,7 @@ def _print_project_summary(state: dict[str, Any]) -> None:
             f"{_format_token_count(state['output_tokens'])} output tokens)"
         )
     print(
-        f"  Parsing {state['display_name']}... {state['sessions']} sessions in {_format_elapsed_seconds(elapsed)}{token_summary}"
+        f"  Parsing {state['display_name']}... {state['sessions']} sessions in {format_elapsed_seconds(elapsed)}{token_summary}"
     )
 
 
@@ -335,7 +335,7 @@ def _export_to_jsonl_serial(
                 f" ({_format_token_count(project_input_tokens)} input / "
                 f"{_format_token_count(project_output_tokens)} output tokens)"
             )
-        print(f" {proj_count} sessions in {_format_elapsed_seconds(project_elapsed)}{token_summary}")
+        print(f" {proj_count} sessions in {format_elapsed_seconds(project_elapsed)}{token_summary}")
 
     return {
         "sessions": total,
@@ -492,8 +492,7 @@ def export_to_jsonl(
     try:
         fh = open(output_path, "wb")
     except OSError as e:
-        print(f"Error: cannot write to {output_path}: {e}", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(f"cannot write to {output_path}: {e}")
 
     with fh as f:
         if parse_project_sessions_fn is iter_project_sessions:
@@ -586,6 +585,11 @@ def _normalize_breakdown(
 
 
 def _fallback_breakdown(counts: object, names: object, *, normalize_key) -> dict[str, dict[str, int]]:
+    # Legacy compat: pre-`model_breakdown`/`project_breakdown` metadata.json files (written before
+    # 2025-Q2) only carried `models` (count dict) and `projects` (name list). When new-style breakdown
+    # keys are absent we synthesize a zero-token breakdown from these legacy fields so old datasets
+    # still render a Model/Project table on republish. Safe to delete this fallback once no in-the-wild
+    # metadata.json predates the breakdown rollout.
     breakdown: dict[str, dict[str, int]] = {}
 
     if isinstance(counts, dict):
@@ -645,11 +649,7 @@ def _build_breakdown_table(label: str, breakdown: object) -> str:
 
 
 def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
-    try:
-        from huggingface_hub import HfApi
-    except ImportError:
-        print("Error: huggingface_hub not installed. Run: pip install huggingface_hub", file=sys.stderr)
-        sys.exit(1)
+    from huggingface_hub import HfApi
 
     api = HfApi()
 
@@ -657,9 +657,10 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
         user_info = api.whoami()
         print(f"Logged in as: {user_info['name']}")
     except (OSError, KeyError, ValueError) as e:
-        print(f"Error: Not logged in to Hugging Face ({e}).", file=sys.stderr)
-        print("Run: hf auth login --token <YOUR_TOKEN>", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(
+            f"Not logged in to Hugging Face ({e}).",
+            hint="Run: hf auth login --token <YOUR_TOKEN>",
+        )
 
     print(f"Pushing to: {repo_id}")
     try:
@@ -689,11 +690,10 @@ def push_to_huggingface(jsonl_path: Path, repo_id: str, meta: dict) -> None:
             commit_message="Update dataset card",
         )
     except (OSError, ValueError) as e:
-        print(f"Error uploading to Hugging Face: {e}", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(f"uploading to Hugging Face: {e}")
 
-    print(f"\nDataset: https://huggingface.co/datasets/{repo_id}")
-    print(f"Browse all: https://huggingface.co/datasets?other={HF_TAG}")
+    print(f"\nDataset: {hf_dataset_url(repo_id)}")
+    print(f"Browse all: {hf_browse_tagged_url()}")
 
 
 def _build_dataset_card(repo_id: str, meta: dict) -> str:
@@ -826,8 +826,7 @@ dataclaw
 
 def update_skill(target: str) -> None:
     if target != "claude":
-        print(f"Error: unknown target '{target}'. Supported: claude", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(f"unknown target '{target}'. Supported: claude")
 
     dest = Path.cwd() / ".claude" / "skills" / "dataclaw" / "SKILL.md"
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -843,10 +842,19 @@ def update_skill(target: str) -> None:
             print(f"Using bundled copy from {bundled}")
             content = bundled.read_bytes()
         else:
-            print("No bundled copy available either.", file=sys.stderr)
-            sys.exit(1)
+            emit_blocked_error("No bundled copy available either.")
 
-    dest.write_bytes(content)
+    fd, tmp_path = tempfile.mkstemp(prefix=".SKILL-", suffix=".md", dir=dest.parent)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.replace(tmp_path, dest)
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     print(f"Skill installed to {dest}")
     print(
         json.dumps(

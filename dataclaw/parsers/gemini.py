@@ -2,9 +2,9 @@ import hashlib
 import logging
 import os
 from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .. import _json as json
 from ..anonymizer import Anonymizer
@@ -245,6 +245,50 @@ def parse_export_session_task(
     return parse_session_file(Path(task.file_path), anonymizer, include_thinking)
 
 
+def _gemini_input_replace(args: dict) -> dict:
+    inp = {
+        "file_path": args.get("file_path", ""),
+        "old_string": args.get("old_string", ""),
+        "new_string": args.get("new_string", ""),
+        "expected_replacements": args.get("expected_replacements"),
+        "instruction": (args.get("instruction", "") if args.get("instruction") else None),
+    }
+    return {k: v for k, v in inp.items() if v is not None}
+
+
+def _gemini_input_list_directory(args: dict) -> dict:
+    inp = {"dir_path": args.get("dir_path", "")}
+    if args.get("ignore"):
+        if isinstance(args["ignore"], list):
+            inp["ignore"] = [str(path) for path in args["ignore"]]
+        else:
+            inp["ignore"] = str(args["ignore"])
+    return inp
+
+
+def _gemini_input_stringify_all(args: dict) -> dict:
+    return {k: str(v) for k, v in args.items()}
+
+
+_GEMINI_INPUT_BUILDERS: dict[str, Callable[[dict], dict]] = {
+    "read_file": lambda args: {"file_path": args.get("file_path", "")},
+    "write_file": lambda args: {
+        "file_path": args.get("file_path", ""),
+        "content": args.get("content", ""),
+    },
+    "replace": _gemini_input_replace,
+    "run_shell_command": lambda args: {"command": args.get("command", "")},
+    "read_many_files": lambda args: {"paths": list(args.get("paths", []))},
+    "search_file_content": _gemini_input_stringify_all,
+    "grep_search": _gemini_input_stringify_all,
+    "list_directory": _gemini_input_list_directory,
+    "glob": lambda args: {"pattern": args.get("pattern", "")},
+    "google_web_search": _gemini_input_stringify_all,
+    "web_fetch": _gemini_input_stringify_all,
+    "codebase_investigator": _gemini_input_stringify_all,
+}
+
+
 def parse_tool_call(tool_call: dict) -> dict:
     """Parse a Gemini tool call into a structured dict with input/output/status."""
     name = tool_call.get("name")
@@ -268,39 +312,9 @@ def parse_tool_call(tool_call: dict) -> dict:
             if content_part is not None:
                 raw_parts.append(content_part)
 
-    if name == "read_file":
-        inp = {"file_path": args.get("file_path", "")}
-    elif name == "write_file":
-        inp = {
-            "file_path": args.get("file_path", ""),
-            "content": args.get("content", ""),
-        }
-    elif name == "replace":
-        inp = {
-            "file_path": args.get("file_path", ""),
-            "old_string": args.get("old_string", ""),
-            "new_string": args.get("new_string", ""),
-            "expected_replacements": args.get("expected_replacements"),
-            "instruction": (args.get("instruction", "") if args.get("instruction") else None),
-        }
-        inp = {k: v for k, v in inp.items() if v is not None}
-    elif name == "run_shell_command":
-        inp = {"command": args.get("command", "")}
-    elif name == "read_many_files":
-        inp = {"paths": list(args.get("paths", []))}
-    elif name in ("search_file_content", "grep_search"):
-        inp = {k: str(v) for k, v in args.items()}
-    elif name == "list_directory":
-        inp = {"dir_path": args.get("dir_path", "")}
-        if args.get("ignore"):
-            if isinstance(args["ignore"], list):
-                inp["ignore"] = [str(path) for path in args["ignore"]]
-            else:
-                inp["ignore"] = str(args["ignore"])
-    elif name == "glob":
-        inp = {"pattern": args.get("pattern", "")}
-    elif name in ("google_web_search", "web_fetch", "codebase_investigator"):
-        inp = {k: str(v) for k, v in args.items()}
+    builder = _GEMINI_INPUT_BUILDERS.get(name)
+    if builder is not None:
+        inp = builder(args)
     else:
         inp = {k: str(v) if isinstance(v, str) else v for k, v in args.items()}
 
@@ -356,8 +370,8 @@ def parse_tool_call(tool_call: dict) -> dict:
         if "exit_code" in parsed:
             try:
                 parsed["exit_code"] = int(parsed["exit_code"])
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("Could not parse gemini exit_code %r: %s", parsed.get("exit_code"), e)
         out = parsed
     elif output_text is not None:
         out = {"text": output_text}

@@ -140,8 +140,8 @@ PROVIDERS: dict[str, Provider] = {
 PROVIDER_ORDER = tuple(PROVIDERS.values())
 
 
-def get_provider(source: str) -> Provider:
-    return PROVIDERS[source]
+def get_provider(source: str) -> Provider | None:
+    return PROVIDERS.get(source)
 
 
 def get_provider_non_anon_string_keys(source: str) -> frozenset[str]:

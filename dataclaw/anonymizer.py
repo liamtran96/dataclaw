@@ -78,10 +78,6 @@ def anonymize_text(text: str, username: str, username_hash: str, home: str | Non
     return text
 
 
-# Backward compatibility
-anonymize_path = anonymize_text
-
-
 class Anonymizer:
     """Stateful anonymizer that consistently hashes usernames."""
 
@@ -105,9 +101,6 @@ class Anonymizer:
             )
         else:
             self._extra_pattern = None
-
-    def path(self, file_path: str) -> str:
-        return self.text(file_path)
 
     def text(self, content: str) -> str:
         result = anonymize_text(content, self.username, self.username_hash, self.home)

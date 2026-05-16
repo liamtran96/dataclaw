@@ -11,7 +11,7 @@ from dataclaw.parsers.claude import (
     find_subagent_sessions,
     parse_session_file,
     parse_subagent_session,
-    process_entry,
+    apply_claude_entry,
 )
 from tests.parser_helpers import disable_other_providers, make_subagent_entry
 
@@ -221,7 +221,7 @@ class TestProcessEntry:
             "input_tokens": 0,
             "output_tokens": 0,
         }
-        process_entry(entry, messages, metadata, stats, include_thinking)
+        apply_claude_entry(entry, messages, metadata, stats, include_thinking)
         return messages, metadata, stats
 
     def test_user_entry(self, mock_anonymizer, sample_user_entry):

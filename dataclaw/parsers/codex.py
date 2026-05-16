@@ -9,6 +9,7 @@ from .. import _json as json
 from ..anonymizer import Anonymizer
 from ..export_tasks import ExportSessionTask
 from .common import (
+    apply_tool_result,
     build_prefixed_project_name,
     build_projects_from_index,
     collect_project_sessions,
@@ -204,19 +205,23 @@ def _build_codex_tool_result(payload: dict[str, Any]) -> dict[str, Any] | None:
     if payload_type == "custom_tool_call_output":
         raw = payload.get("output", "")
         out: dict[str, Any] = {}
+        parsed: Any = None
         try:
             parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
             text = parsed.get("output", "")
             if text:
                 out["output"] = str(text)
             meta = parsed.get("metadata", {})
-            if "exit_code" in meta:
-                out["exit_code"] = meta["exit_code"]
-            if "duration_seconds" in meta:
-                out["duration_seconds"] = meta["duration_seconds"]
-        except (json.JSONDecodeError, AttributeError):
-            if raw:
-                out["output"] = raw
+            if isinstance(meta, dict):
+                if "exit_code" in meta:
+                    out["exit_code"] = meta["exit_code"]
+                if "duration_seconds" in meta:
+                    out["duration_seconds"] = meta["duration_seconds"]
+        elif raw:
+            out["output"] = raw
         return {"output": out, "status": "success"}
 
     return None
@@ -469,18 +474,11 @@ def _clear_pending_user_content(state: CodexParseState) -> None:
     state.pending_user_timestamp = None
 
 
-def _apply_codex_tool_result(tool_use: dict[str, Any], result: dict[str, Any]) -> None:
-    if result.get("output"):
-        tool_use["output"] = result["output"]
-    if result.get("status"):
-        tool_use["status"] = result["status"]
-
-
 def _attach_codex_tool_result(state: CodexParseState, call_id: str, result: dict[str, Any]) -> None:
     matched_tool_uses = state.pending_tool_uses_by_call_id.pop(call_id, [])
     if matched_tool_uses:
         for tool_use in matched_tool_uses:
-            _apply_codex_tool_result(tool_use, result)
+            apply_tool_result(tool_use, result)
         return
     state.pending_tool_results[call_id] = result
 
@@ -490,7 +488,7 @@ def _register_codex_tool_use(state: CodexParseState, tool_use: dict[str, Any], c
         return
     pending_result = state.pending_tool_results.pop(call_id, None)
     if pending_result is not None:
-        _apply_codex_tool_result(tool_use, pending_result)
+        apply_tool_result(tool_use, pending_result)
         return
     state.pending_tool_uses_by_call_id.setdefault(call_id, []).append(tool_use)
 

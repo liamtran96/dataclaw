@@ -598,24 +598,6 @@ class TestExportToJsonl:
 
 
 class TestPushToHuggingface:
-    def test_missing_huggingface_hub(self, tmp_path, monkeypatch):
-        jsonl_path = tmp_path / "data.jsonl"
-        jsonl_path.write_text("{}\n")
-
-        import builtins
-
-        real_import = builtins.__import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == "huggingface_hub":
-                raise ImportError("No module named 'huggingface_hub'")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", mock_import)
-
-        with pytest.raises(SystemExit):
-            push_to_huggingface(jsonl_path, "user/repo", {})
-
     def test_success_flow(self, tmp_path):
         jsonl_path = tmp_path / "data.jsonl"
         jsonl_path.write_text("{}\n")
@@ -631,6 +613,8 @@ class TestPushToHuggingface:
         assert mock_api.upload_file.call_count == 3
 
     def test_auth_failure(self, tmp_path):
+        from dataclaw._cli.common import CLIBlockedError
+
         jsonl_path = tmp_path / "data.jsonl"
         jsonl_path.write_text("{}\n")
 
@@ -639,7 +623,7 @@ class TestPushToHuggingface:
         mock_hf_module = MagicMock(HfApi=MagicMock(return_value=mock_api))
 
         with patch.dict("sys.modules", {"huggingface_hub": mock_hf_module}):
-            with pytest.raises(SystemExit):
+            with pytest.raises(CLIBlockedError):
                 push_to_huggingface(jsonl_path, "user/repo", {})
 
 

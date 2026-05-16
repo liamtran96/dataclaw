@@ -1,3 +1,4 @@
+import logging
 import platform
 import sqlite3
 from collections.abc import Iterable
@@ -20,8 +21,9 @@ from .common import (
     update_time_bounds,
 )
 
-CURSOR_SOURCE = "cursor"
-SOURCE = CURSOR_SOURCE
+logger = logging.getLogger(__name__)
+
+SOURCE = "cursor"
 _SYS = platform.system()
 if _SYS == "Darwin":
     CURSOR_DB = Path.home() / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
@@ -84,7 +86,8 @@ def _build_project_index() -> dict[str, list[str]]:
                 cid = key.replace("composerData:", "")
                 try:
                     data = json.loads(value) if isinstance(value, (str, bytes)) else {}
-                except (json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning("Skipping malformed cursor composerData %s: %s", cid, e)
                     continue
                 headers = data.get("fullConversationHeadersOnly") or data.get("conversation", [])
                 if len(headers) < 2:
@@ -131,7 +134,8 @@ def _build_project_index() -> dict[str, list[str]]:
                 if cid not in found_cids:
                     index.setdefault(UNKNOWN_CURSOR_CWD, []).append(cid)
 
-    except sqlite3.Error:
+    except sqlite3.Error as e:
+        logger.warning("Failed to read Cursor index DB %s: %s", CURSOR_DB, e)
         return {}
     return index
 
@@ -148,7 +152,7 @@ def discover_projects() -> list[dict]:
     total_sessions = sum(len(cids) for cids in index.values())
     return build_projects_from_index(
         index,
-        CURSOR_SOURCE,
+        SOURCE,
         build_project_name,
         lambda cids: int(db_size * (len(cids) / total_sessions)) if total_sessions else 0,
     )
@@ -173,9 +177,10 @@ def parse_project_sessions(
                     include_thinking,
                 ),
                 build_project_name(project_dir_name),
-                CURSOR_SOURCE,
+                SOURCE,
             )
-    except sqlite3.Error:
+    except sqlite3.Error as e:
+        logger.warning("Failed to read Cursor sessions DB %s: %s", CURSOR_DB, e)
         return
 
 
@@ -208,7 +213,8 @@ def parse_export_session_task(
     try:
         with sqlite3.connect(f"file:{CURSOR_DB}?mode=ro", uri=True) as conn:
             return parse_session(task.item_id, conn, anonymizer, include_thinking)
-    except sqlite3.Error:
+    except sqlite3.Error as e:
+        logger.warning("Failed to read Cursor session %s: %s", task.item_id, e)
         return None
 
 
@@ -279,8 +285,8 @@ def parse_session(
         bid = key.split(":")[-1]
         try:
             bubble_map[bid] = json.loads(val) if isinstance(val, (str, bytes)) else {}
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning("Skipping malformed cursor bubble %s: %s", bid, e)
 
     metadata: dict[str, Any] = {
         "session_id": composer_id,

@@ -41,7 +41,7 @@ def load_work_dirs(config_path: Path) -> dict[str, str]:
 
 def get_project_hash(cwd: str) -> str:
     """Generate Kimi project hash from working directory path (MD5)."""
-    return hashlib.md5(cwd.encode()).hexdigest()
+    return hashlib.md5(cwd.encode(), usedforsecurity=False).hexdigest()
 
 
 def discover_projects(

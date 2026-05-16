@@ -1,5 +1,6 @@
 """Review, PII scan, and confirm helpers for the DataClaw CLI."""
 
+import logging
 import os
 import re
 import sys
@@ -11,7 +12,9 @@ from pathlib import Path
 from .. import _json as json
 from .._workers import configured_workers
 from ..config import DataClawConfig
-from ..secrets import _has_mixed_char_types, _shannon_entropy
+from ..secrets import has_mixed_char_types, shannon_entropy
+
+logger = logging.getLogger(__name__)
 from .common import (
     CONFIRM_COMMAND_EXAMPLE,
     CONFIRM_COMMAND_SKIP_FULL_NAME_EXAMPLE,
@@ -20,6 +23,7 @@ from .common import (
     MIN_MANUAL_SCAN_SESSIONS,
     REQUIRED_REVIEW_ATTESTATIONS,
     _format_size,
+    emit_blocked_error,
 )
 
 _PII_SCANS = {
@@ -43,90 +47,47 @@ def _find_export_file(file_path: Path | None) -> Path:
         for candidate in [Path("dataclaw_export.jsonl"), Path("dataclaw_conversations.jsonl")]:
             if candidate.exists():
                 return candidate
-    print(
-        json.dumps(
-            {
-                "error": "No export file found.",
-                "hint": "Run Step 4 first to generate a local export file.",
-                "blocked_on_step": "Step 4/6",
-                "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                "next_command": "dataclaw export --no-push --output dataclaw_export.jsonl",
-            },
-            indent=2,
-        )
+    emit_blocked_error(
+        "No export file found.",
+        hint="Run Step 4 first to generate a local export file.",
+        blocked_on_step="Step 4/6",
+        process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+        next_command="dataclaw export --no-push --output dataclaw_export.jsonl",
     )
-    sys.exit(1)
+
+
+_ENTROPY_CANDIDATE_RE = re.compile(r"[A-Za-z0-9_/+=.-]{20,}")
+_ENTROPY_KNOWN_PREFIXES = ("eyJ", "ghp_", "gho_", "ghs_", "ghr_", "sk-", "hf_", "AKIA", "pypi-", "npm_", "xox")
+_ENTROPY_BENIGN_PREFIXES = ("https://", "http://", "sha256-", "sha384-", "sha512-", "sha1-", "data:", "file://", "mailto:")
+_ENTROPY_BENIGN_SUBSTRINGS = (
+    "node_modules",
+    "[REDACTED]",
+    "package-lock",
+    "webpack",
+    "babel",
+    "eslint",
+    ".chunk.",
+    "vendor/",
+    "dist/",
+    "build/",
+)
+_ENTROPY_FILE_EXTENSIONS = (
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".css", ".html", ".json", ".yaml", ".yml",
+    ".toml", ".md", ".rst", ".txt", ".sh", ".go", ".rs", ".java", ".rb", ".php",
+    ".c", ".h", ".cpp", ".hpp", ".swift", ".kt", ".lock", ".cfg", ".ini", ".xml",
+    ".svg", ".png", ".jpg", ".gif", ".woff", ".ttf", ".map", ".vue", ".scss",
+    ".less", ".sql", ".env", ".log",
+)
+_ENTROPY_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+_ENTROPY_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
 def _scan_high_entropy_strings(content: str, max_results: int = 15) -> list[dict]:
     if not content:
         return []
 
-    candidate_re = re.compile(r"[A-Za-z0-9_/+=.-]{20,}")
-    known_prefixes = ("eyJ", "ghp_", "gho_", "ghs_", "ghr_", "sk-", "hf_", "AKIA", "pypi-", "npm_", "xox")
-    benign_prefixes = ("https://", "http://", "sha256-", "sha384-", "sha512-", "sha1-", "data:", "file://", "mailto:")
-    benign_substrings = (
-        "node_modules",
-        "[REDACTED]",
-        "package-lock",
-        "webpack",
-        "babel",
-        "eslint",
-        ".chunk.",
-        "vendor/",
-        "dist/",
-        "build/",
-    )
-    file_extensions = (
-        ".py",
-        ".js",
-        ".ts",
-        ".tsx",
-        ".jsx",
-        ".css",
-        ".html",
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".md",
-        ".rst",
-        ".txt",
-        ".sh",
-        ".go",
-        ".rs",
-        ".java",
-        ".rb",
-        ".php",
-        ".c",
-        ".h",
-        ".cpp",
-        ".hpp",
-        ".swift",
-        ".kt",
-        ".lock",
-        ".cfg",
-        ".ini",
-        ".xml",
-        ".svg",
-        ".png",
-        ".jpg",
-        ".gif",
-        ".woff",
-        ".ttf",
-        ".map",
-        ".vue",
-        ".scss",
-        ".less",
-        ".sql",
-        ".env",
-        ".log",
-    )
-    hex_re = re.compile(r"^[0-9a-fA-F]+$")
-    uuid_re = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
-
     unique_candidates: dict[str, list[int]] = {}
-    for match in candidate_re.finditer(content):
+    for match in _ENTROPY_CANDIDATE_RE.finditer(content):
         token = match.group(0)
         unique_candidates.setdefault(token, []).append(match.start())
 
@@ -134,23 +95,23 @@ def _scan_high_entropy_strings(content: str, max_results: int = 15) -> list[dict
     for token, positions in unique_candidates.items():
         if len(token) > 512:
             continue
-        if any(token.startswith(prefix) for prefix in known_prefixes):
+        if any(token.startswith(prefix) for prefix in _ENTROPY_KNOWN_PREFIXES):
             continue
-        if hex_re.match(token) or uuid_re.match(token):
+        if _ENTROPY_HEX_RE.match(token) or _ENTROPY_UUID_RE.match(token):
             continue
         token_lower = token.lower()
-        if any(ext in token_lower for ext in file_extensions):
+        if any(ext in token_lower for ext in _ENTROPY_FILE_EXTENSIONS):
             continue
         if token.count("/") >= 2 or token.count(".") >= 3:
             continue
-        if any(token_lower.startswith(prefix) for prefix in benign_prefixes):
+        if any(token_lower.startswith(prefix) for prefix in _ENTROPY_BENIGN_PREFIXES):
             continue
-        if any(substring in token_lower for substring in benign_substrings):
+        if any(substring in token_lower for substring in _ENTROPY_BENIGN_SUBSTRINGS):
             continue
-        if not _has_mixed_char_types(token):
+        if not has_mixed_char_types(token):
             continue
 
-        entropy = _shannon_entropy(token)
+        entropy = shannon_entropy(token)
         if entropy < 4.0:
             continue
 
@@ -170,7 +131,8 @@ def _scan_pii(file_path: Path) -> dict:
         with open(file_path) as f:
             for line_no, line in enumerate(f, start=1):
                 _update_pii_matches(line, matches_by_scan, high_entropy_matches, line_no=line_no)
-    except OSError:
+    except OSError as e:
+        logger.warning("PII scan failed to read %s: %s", file_path, e)
         return {}
 
     return _finalize_pii_results(matches_by_scan, high_entropy_matches)
@@ -597,40 +559,28 @@ def confirm(
 
     normalized_full_name = _normalize_attestation_text(full_name)
     if skip_full_name_scan and normalized_full_name:
-        print(
-            json.dumps(
-                {
-                    "error": "Use either --full-name or --skip-full-name-scan, not both.",
-                    "hint": (
-                        "Provide --full-name for an exact-name scan, or use --skip-full-name-scan "
-                        "if the user declines sharing their name."
-                    ),
-                    "blocked_on_step": "Step 5/6",
-                    "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                    "next_command": CONFIRM_COMMAND_EXAMPLE,
-                },
-                indent=2,
-            )
+        emit_blocked_error(
+            "Use either --full-name or --skip-full-name-scan, not both.",
+            hint=(
+                "Provide --full-name for an exact-name scan, or use --skip-full-name-scan "
+                "if the user declines sharing their name."
+            ),
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
         )
-        sys.exit(1)
     if not normalized_full_name and not skip_full_name_scan:
-        print(
-            json.dumps(
-                {
-                    "error": "Missing required --full-name for verification scan.",
-                    "hint": (
-                        "Ask the user for their full name and pass it via --full-name "
-                        "to run an exact-name privacy check. If the user declines, rerun with "
-                        "--skip-full-name-scan and a full-name attestation describing the skip."
-                    ),
-                    "blocked_on_step": "Step 5/6",
-                    "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                    "next_command": CONFIRM_COMMAND_SKIP_FULL_NAME_EXAMPLE,
-                },
-                indent=2,
-            )
+        emit_blocked_error(
+            "Missing required --full-name for verification scan.",
+            hint=(
+                "Ask the user for their full name and pass it via --full-name "
+                "to run an exact-name privacy check. If the user declines, rerun with "
+                "--skip-full-name-scan and a full-name attestation describing the skip."
+            ),
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_SKIP_FULL_NAME_EXAMPLE,
         )
-        sys.exit(1)
 
     attestations, attestation_errors, manual_scan_sessions = _collect_review_attestations(
         attest_asked_full_name=attest_asked_full_name,
@@ -640,20 +590,14 @@ def confirm(
         skip_full_name_scan=skip_full_name_scan,
     )
     if attestation_errors:
-        print(
-            json.dumps(
-                {
-                    "error": "Missing or invalid review attestations.",
-                    "attestation_errors": attestation_errors,
-                    "required_attestations": REQUIRED_REVIEW_ATTESTATIONS,
-                    "blocked_on_step": "Step 5/6",
-                    "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                    "next_command": CONFIRM_COMMAND_EXAMPLE,
-                },
-                indent=2,
-            )
+        emit_blocked_error(
+            "Missing or invalid review attestations.",
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
+            attestation_errors=attestation_errors,
+            required_attestations=REQUIRED_REVIEW_ATTESTATIONS,
         )
-        sys.exit(1)
 
     try:
         review_scan = _scan_export_review(
@@ -661,8 +605,7 @@ def confirm(
             None if skip_full_name_scan else normalized_full_name,
         )
     except (OSError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": f"Cannot read {file_path}: {e}"}))
-        sys.exit(1)
+        emit_blocked_error(f"Cannot read {file_path}: {e}")
 
     if skip_full_name_scan:
         full_name_scan = {

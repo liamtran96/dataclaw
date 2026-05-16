@@ -3,14 +3,59 @@ import logging
 from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from .. import _json as json
 
 logger = logging.getLogger(__name__)
 
 
-def iter_jsonl(filepath: Path):
+class ProjectRecord(TypedDict, total=False):
+    """Stable shape returned by every provider's discover_projects()."""
+
+    dir_name: str
+    display_name: str
+    session_count: int
+    total_size_bytes: int
+    source: str
+
+
+class SessionStats(TypedDict, total=False):
+    """Per-session counters accumulated by parsers."""
+
+    user_messages: int
+    assistant_messages: int
+    tool_uses: int
+    input_tokens: int
+    output_tokens: int
+
+
+class SessionResult(TypedDict, total=False):
+    """Shape of make_session_result()'s return value (the parser/exporter contract)."""
+
+    session_id: str
+    model: str | None
+    git_branch: str | None
+    start_time: str | None
+    end_time: str | None
+    messages: list[dict[str, Any]]
+    stats: SessionStats
+    project: str
+    source: str
+
+
+def apply_tool_result(tool_use: dict[str, Any], result: dict[str, Any]) -> None:
+    """Copy output/status from a result onto a tool_use entry, if present.
+
+    Shared across claude/codex/openclaw parsers — the result envelope is identical.
+    """
+    if result.get("output"):
+        tool_use["output"] = result["output"]
+    if result.get("status"):
+        tool_use["status"] = result["status"]
+
+
+def iter_jsonl(filepath: Path) -> Iterator[dict[str, Any]]:
     """Yield parsed JSON objects from a JSONL file, skipping blank/malformed lines."""
     with open(filepath) as f:
         for line in f:

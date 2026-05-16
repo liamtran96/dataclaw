@@ -12,6 +12,8 @@ def build_export_session_tasks(selected_projects: list[dict], default_source: st
     for project_index, project in enumerate(selected_projects):
         source = project.get("source", default_source)
         provider = get_provider(source)
+        if provider is None:
+            continue
         tasks.extend(provider.build_export_session_tasks(project_index, project))
     return tasks
 
@@ -22,4 +24,6 @@ def parse_export_session_task(
     include_thinking: bool,
 ) -> dict | None:
     provider = get_provider(task.source)
+    if provider is None:
+        return None
     return provider.parse_export_session_task(task, anonymizer, include_thinking)

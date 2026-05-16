@@ -401,11 +401,13 @@ class TestJsonlUtilityCommands:
         captured = {}
 
         def fake_diff_jsonl(old_path, new_path, output_path, include_records_for_modified):
+            from dataclaw.jsonl_tools import DiffResult
+
             captured["old_path"] = old_path
             captured["new_path"] = new_path
             captured["output_path"] = output_path
             captured["include_records_for_modified"] = include_records_for_modified
-            return {"event_count": 2, "output_path": Path("/tmp/diff.yaml"), "summary": {}}
+            return DiffResult(output_path=Path("/tmp/diff.yaml"), event_count=2, summary={})
 
         monkeypatch.setattr("dataclaw.cli.diff_jsonl", fake_diff_jsonl)
         monkeypatch.setattr(

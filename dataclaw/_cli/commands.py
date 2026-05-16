@@ -1,10 +1,10 @@
 """Command orchestration for the DataClaw CLI."""
 
 import argparse
-import sys
 import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from .. import _json as json
 from ..anonymizer import Anonymizer
@@ -34,7 +34,10 @@ from .common import (
     _source_scope_literals,
     _source_scope_placeholder,
     default_repo_name,
+    emit_blocked_error,
+    format_elapsed_seconds,
     get_hf_username,
+    hf_dataset_url,
 )
 from .review import (
     _build_pii_commands,
@@ -45,16 +48,17 @@ from .review import (
 )
 
 
-def _format_elapsed_seconds(seconds: float) -> str:
-    return f"{seconds:.2f}s"
-
-
 def _print_export_elapsed(start_time: float) -> None:
     elapsed = time.perf_counter() - start_time
-    print(f"Total time: {_format_elapsed_seconds(elapsed)}")
+    print(f"Total time: {format_elapsed_seconds(elapsed)}")
 
 
-def list_projects(source_filter: str, *, discover_projects_fn, load_config_fn) -> None:
+def list_projects(
+    source_filter: str,
+    *,
+    discover_projects_fn: Callable[[], list[dict]],
+    load_config_fn: Callable[[], DataClawConfig],
+) -> None:
     projects = _filter_projects_by_source(discover_projects_fn(), source_filter)
     if not projects:
         print(f"No {_source_label(source_filter)} sessions found.")
@@ -86,9 +90,9 @@ def configure(
     redact: list[str] | None,
     redact_usernames: list[str] | None,
     confirm_projects: bool,
-    load_config_fn,
-    save_config_fn,
-    config_file=CONFIG_FILE,
+    load_config_fn: Callable[[], DataClawConfig],
+    save_config_fn: Callable[[DataClawConfig], None],
+    config_file: Path = CONFIG_FILE,
 ) -> None:
     config = load_config_fn()
     if repo is not None:
@@ -108,7 +112,7 @@ def configure(
     print(json.dumps(_mask_config_for_display(config), indent=2))
 
 
-def status(*, load_config_fn) -> None:
+def status(*, load_config_fn: Callable[[], DataClawConfig]) -> None:
     config = load_config_fn()
     stage, stage_number, hf_user = _compute_stage(config)
 
@@ -133,7 +137,14 @@ def status(*, load_config_fn) -> None:
     print(json.dumps(result, indent=2))
 
 
-def prep(source_filter: str, *, load_config_fn, save_config_fn, discover_projects_fn, has_session_sources_fn) -> None:
+def prep(
+    source_filter: str,
+    *,
+    load_config_fn: Callable[[], DataClawConfig],
+    save_config_fn: Callable[[DataClawConfig], None],
+    discover_projects_fn: Callable[[], list[dict]],
+    has_session_sources_fn: Callable[[str], bool],
+) -> None:
     config = load_config_fn()
     resolved_source_choice, source_explicit = _resolve_source_choice(source_filter, config)
     effective_source_filter = _normalize_source_filter(resolved_source_choice)
@@ -145,13 +156,11 @@ def prep(source_filter: str, *, load_config_fn, save_config_fn, discover_project
             if provider
             else "None of the supported provider session directories were found."
         )
-        print(json.dumps({"error": err}))
-        sys.exit(1)
+        emit_blocked_error(err)
 
     projects = _filter_projects_by_source(discover_projects_fn(), effective_source_filter)
     if not projects:
-        print(json.dumps({"error": f"No {_source_label(effective_source_filter)} sessions found."}))
-        sys.exit(1)
+        emit_blocked_error(f"No {_source_label(effective_source_filter)} sessions found.")
 
     excluded = set(config.get("excluded_projects", []))
     stage, stage_number, hf_user = _compute_stage(config)
@@ -196,7 +205,13 @@ def prep(source_filter: str, *, load_config_fn, save_config_fn, discover_project
     print(json.dumps(result, indent=2))
 
 
-def handle_config(args, *, load_config_fn, save_config_fn, configure_fn) -> None:
+def handle_config(
+    args: argparse.Namespace,
+    *,
+    load_config_fn: Callable[[], DataClawConfig],
+    save_config_fn: Callable[[DataClawConfig], None],
+    configure_fn: Callable[..., Any],
+) -> None:
     has_changes = (
         args.repo or args.source or args.exclude or args.redact or args.redact_usernames or args.confirm_projects
     )
@@ -214,15 +229,15 @@ def handle_config(args, *, load_config_fn, save_config_fn, configure_fn) -> None
 
 
 def run_export(
-    args,
+    args: argparse.Namespace,
     *,
-    load_config_fn,
-    save_config_fn,
-    discover_projects_fn,
-    has_session_sources_fn,
-    export_to_jsonl_fn,
-    summarize_jsonl_fn,
-    push_to_huggingface_fn,
+    load_config_fn: Callable[[], DataClawConfig],
+    save_config_fn: Callable[[DataClawConfig], None],
+    discover_projects_fn: Callable[[], list[dict]],
+    has_session_sources_fn: Callable[[str], bool],
+    export_to_jsonl_fn: Callable[..., dict],
+    summarize_jsonl_fn: Callable[[Path], dict],
+    push_to_huggingface_fn: Callable[[Path, str, dict], None],
 ) -> None:
     config = load_config_fn()
     source_choice, source_explicit = _resolve_source_choice(args.source, config)
@@ -231,57 +246,37 @@ def run_export(
     confirmed_file: Path | None = None
 
     if not args.no_push:
+        publish_attestation_next_command = (
+            "dataclaw export --publish-attestation "
+            '"User explicitly approved publishing to Hugging Face on YYYY-MM-DD."'
+        )
         if args.attest_user_approved_publish and not args.publish_attestation:
-            print(
-                json.dumps(
-                    {
-                        "error": "Deprecated publish attestation flag was provided.",
-                        "hint": "Use --publish-attestation with a detailed text statement.",
-                        "blocked_on_step": "Step 6/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": (
-                            "dataclaw export --publish-attestation "
-                            '"User explicitly approved publishing to Hugging Face on YYYY-MM-DD."'
-                        ),
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "Deprecated publish attestation flag was provided.",
+                hint="Use --publish-attestation with a detailed text statement.",
+                blocked_on_step="Step 6/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command=publish_attestation_next_command,
             )
-            sys.exit(1)
         if config.get("stage") != "confirmed":
-            print(
-                json.dumps(
-                    {
-                        "error": "You must run `dataclaw confirm` before pushing.",
-                        "hint": "Export first with --no-push, review the data, then run `dataclaw confirm`.",
-                        "blocked_on_step": "Step 5/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": "dataclaw confirm",
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "You must run `dataclaw confirm` before pushing.",
+                hint="Export first with --no-push, review the data, then run `dataclaw confirm`.",
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw confirm",
             )
-            sys.exit(1)
 
         publish_attestation, publish_error = _validate_publish_attestation(args.publish_attestation)
         if publish_error:
-            print(
-                json.dumps(
-                    {
-                        "error": "Missing or invalid publish attestation.",
-                        "publish_attestation_error": publish_error,
-                        "hint": "Ask the user to explicitly approve publishing, then pass a detailed text attestation.",
-                        "blocked_on_step": "Step 6/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": (
-                            "dataclaw export --publish-attestation "
-                            '"User explicitly approved publishing to Hugging Face on YYYY-MM-DD."'
-                        ),
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "Missing or invalid publish attestation.",
+                hint="Ask the user to explicitly approve publishing, then pass a detailed text attestation.",
+                blocked_on_step="Step 6/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command=publish_attestation_next_command,
+                publish_attestation_error=publish_error,
             )
-            sys.exit(1)
 
         review_attestations = config.get("review_attestations", {})
         review_verification = config.get("review_verification", {})
@@ -304,19 +299,13 @@ def run_export(
             )
 
         if review_errors:
-            print(
-                json.dumps(
-                    {
-                        "error": "Missing or invalid review attestations from confirm step.",
-                        "attestation_errors": review_errors,
-                        "blocked_on_step": "Step 5/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": CONFIRM_COMMAND_EXAMPLE,
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "Missing or invalid review attestations from confirm step.",
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command=CONFIRM_COMMAND_EXAMPLE,
+                attestation_errors=review_errors,
             )
-            sys.exit(1)
 
         config["publish_attestation"] = publish_attestation
         save_config_fn(config)
@@ -324,56 +313,38 @@ def run_export(
         last_confirm = config.get("last_confirm", {})
         confirmed_file_raw = last_confirm.get("file")
         if not isinstance(confirmed_file_raw, str) or not confirmed_file_raw:
-            print(
-                json.dumps(
-                    {
-                        "error": "No confirmed export file is recorded.",
-                        "hint": "Run `dataclaw confirm --file path/to/export.jsonl` on the reviewed local export, then push again.",
-                        "blocked_on_step": "Step 5/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": "dataclaw confirm",
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "No confirmed export file is recorded.",
+                hint="Run `dataclaw confirm --file path/to/export.jsonl` on the reviewed local export, then push again.",
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw confirm",
             )
-            sys.exit(1)
 
         confirmed_file = Path(confirmed_file_raw)
         if not confirmed_file.exists():
-            print(
-                json.dumps(
-                    {
-                        "error": f"Confirmed export file does not exist: {confirmed_file}",
-                        "hint": "Re-export locally with `dataclaw export --no-push`, review it, rerun `dataclaw confirm`, then push again.",
-                        "blocked_on_step": "Step 4/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": "dataclaw export --no-push --output dataclaw_export.jsonl",
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                f"Confirmed export file does not exist: {confirmed_file}",
+                hint="Re-export locally with `dataclaw export --no-push`, review it, rerun `dataclaw confirm`, then push again.",
+                blocked_on_step="Step 4/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw export --no-push --output dataclaw_export.jsonl",
             )
-            sys.exit(1)
 
     if confirmed_file is None and not source_explicit:
-        print(
-            json.dumps(
-                {
-                    "error": "Source scope is not confirmed yet.",
-                    "hint": f"Explicitly choose one source scope before exporting: {_source_scope_literals()}.",
-                    "required_action": (
-                        f"Ask the user whether to export {_all_provider_labels()} or all. "
-                        f"Then run `dataclaw config --source {_source_scope_placeholder()}` "
-                        f"or pass `--source {_source_scope_placeholder()}` on the export command."
-                    ),
-                    "allowed_sources": sorted(EXPLICIT_SOURCE_CHOICES),
-                    "blocked_on_step": "Step 3A/6",
-                    "process_steps": _setup_to_publish_steps(),
-                    "next_command": "dataclaw config --source all",
-                },
-                indent=2,
-            )
+        emit_blocked_error(
+            "Source scope is not confirmed yet.",
+            hint=f"Explicitly choose one source scope before exporting: {_source_scope_literals()}.",
+            blocked_on_step="Step 3A/6",
+            process_steps=_setup_to_publish_steps(),
+            next_command="dataclaw config --source all",
+            required_action=(
+                f"Ask the user whether to export {_all_provider_labels()} or all. "
+                f"Then run `dataclaw config --source {_source_scope_placeholder()}` "
+                f"or pass `--source {_source_scope_placeholder()}` on the export command."
+            ),
+            allowed_sources=sorted(EXPLICIT_SOURCE_CHOICES),
         )
-        sys.exit(1)
 
     print("=" * 50)
     print("  DataClaw: Coding Agent Logs -> Hugging Face")
@@ -416,7 +387,7 @@ def run_export(
                     "stage": "done",
                     "stage_number": 4,
                     "total_stages": 4,
-                    "dataset_url": f"https://huggingface.co/datasets/{repo_id}",
+                    "dataset_url": hf_dataset_url(repo_id),
                     "next_steps": [
                         "Done! Dataset is live. To update later, repeat Steps 3 through 6: dataclaw prep, reconfigure as needed, export locally, confirm, then publish.",
                     ],
@@ -429,50 +400,44 @@ def run_export(
 
     if not has_session_sources_fn(source_filter):
         provider = PROVIDERS.get(source_filter)
-        if provider:
-            print(f"Error: {provider.missing_source_message()}", file=sys.stderr)
-        else:
-            print("Error: none of the supported provider session directories were found.", file=sys.stderr)
-        sys.exit(1)
+        msg = (
+            provider.missing_source_message()
+            if provider
+            else "none of the supported provider session directories were found."
+        )
+        emit_blocked_error(msg)
 
     projects = _filter_projects_by_source(discover_projects_fn(), source_filter)
     if not projects:
-        print(f"No {_source_label(source_filter)} sessions found.", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(f"No {_source_label(source_filter)} sessions found.")
 
     if not args.all_projects and not config.get("projects_confirmed", False):
         excluded = set(config.get("excluded_projects", []))
         list_command = f"dataclaw list --source {source_choice}"
-        print(
-            json.dumps(
+        emit_blocked_error(
+            "Project selection is not confirmed yet.",
+            hint=(
+                f"Run `{list_command}`, present the full project list to the user, discuss which projects to exclude, then run "
+                '`dataclaw config --exclude "p1,p2"` or `dataclaw config --confirm-projects`.'
+            ),
+            blocked_on_step="Step 3B/6",
+            process_steps=_setup_to_publish_steps(),
+            next_command="dataclaw config --confirm-projects",
+            required_action=(
+                "Send the full project/folder list below to the user in a message and get explicit "
+                "confirmation on exclusions before exporting."
+            ),
+            projects=[
                 {
-                    "error": "Project selection is not confirmed yet.",
-                    "hint": (
-                        f"Run `{list_command}`, present the full project list to the user, discuss which projects to exclude, then run "
-                        '`dataclaw config --exclude "p1,p2"` or `dataclaw config --confirm-projects`.'
-                    ),
-                    "required_action": (
-                        "Send the full project/folder list below to the user in a message and get explicit "
-                        "confirmation on exclusions before exporting."
-                    ),
-                    "projects": [
-                        {
-                            "name": project["display_name"],
-                            "source": project.get("source", DEFAULT_SOURCE),
-                            "sessions": project["session_count"],
-                            "size": _format_size(project["total_size_bytes"]),
-                            "excluded": project["display_name"] in excluded,
-                        }
-                        for project in projects
-                    ],
-                    "blocked_on_step": "Step 3B/6",
-                    "process_steps": _setup_to_publish_steps(),
-                    "next_command": "dataclaw config --confirm-projects",
-                },
-                indent=2,
-            )
+                    "name": project["display_name"],
+                    "source": project.get("source", DEFAULT_SOURCE),
+                    "sessions": project["session_count"],
+                    "size": _format_size(project["total_size_bytes"]),
+                    "excluded": project["display_name"] in excluded,
+                }
+                for project in projects
+            ],
         )
-        sys.exit(1)
 
     total_sessions = sum(project["session_count"] for project in projects)
     total_size = sum(project["total_size_bytes"] for project in projects)
@@ -496,8 +461,7 @@ def run_export(
         print(f"  - {project['display_name']} (excluded)")
 
     if not included:
-        print("\nNo projects to export. Run: dataclaw config --exclude ''")
-        sys.exit(1)
+        emit_blocked_error("No projects to export. Run: dataclaw config --exclude ''")
 
     extra_usernames = config.get("redact_usernames", [])
     anonymizer = Anonymizer(extra_usernames=extra_usernames)
@@ -593,7 +557,7 @@ def run_export(
                 "stage": "done",
                 "stage_number": 4,
                 "total_stages": 4,
-                "dataset_url": f"https://huggingface.co/datasets/{repo_id}",
+                "dataset_url": hf_dataset_url(repo_id),
                 "next_steps": [
                     "Done! Dataset is live. To update later, repeat Steps 3 through 6: dataclaw prep, reconfigure as needed, export locally, confirm, then publish.",
                 ],
@@ -604,17 +568,20 @@ def run_export(
     )
 
 
-def run_jsonl_to_yaml(args, *, jsonl_to_yaml_fn) -> None:
+def run_jsonl_to_yaml(
+    args: argparse.Namespace,
+    *,
+    jsonl_to_yaml_fn: Callable[[Path, Path | None], Path],
+) -> None:
     input_path = args.input or Path("dataclaw_conversations.jsonl")
     try:
         output_path = jsonl_to_yaml_fn(input_path, args.output)
     except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        emit_blocked_error(str(exc))
     print(f"Written to {output_path}")
 
 
-def run_diff_jsonl(args, *, diff_jsonl_fn) -> None:
+def run_diff_jsonl(args: argparse.Namespace, *, diff_jsonl_fn: Callable[..., Any]) -> None:
     try:
         result = diff_jsonl_fn(
             args.old,
@@ -623,23 +590,22 @@ def run_diff_jsonl(args, *, diff_jsonl_fn) -> None:
             include_records_for_modified=args.include_records_for_modified,
         )
     except (FileNotFoundError, RuntimeError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Wrote {result['event_count']} change documents to {result['output_path']}")
+        emit_blocked_error(str(exc))
+    print(f"Wrote {result.event_count} change documents to {result.output_path}")
 
 
 def main_impl(
     *,
-    prep_fn,
-    status_fn,
-    confirm_fn,
-    update_skill_fn,
-    list_projects_fn,
-    load_config_fn,
-    handle_config_fn,
-    run_export_fn,
-    run_jsonl_to_yaml_fn,
-    run_diff_jsonl_fn,
+    prep_fn: Callable[..., Any],
+    status_fn: Callable[[], None],
+    confirm_fn: Callable[..., Any],
+    update_skill_fn: Callable[[str], None],
+    list_projects_fn: Callable[..., Any],
+    load_config_fn: Callable[[], DataClawConfig],
+    handle_config_fn: Callable[[argparse.Namespace], None],
+    run_export_fn: Callable[[argparse.Namespace], None],
+    run_jsonl_to_yaml_fn: Callable[[argparse.Namespace], None],
+    run_diff_jsonl_fn: Callable[[argparse.Namespace], None],
 ) -> None:
     parser = argparse.ArgumentParser(description="DataClaw: Coding Agent Logs -> Hugging Face")
     sub = parser.add_subparsers(dest="command")
@@ -751,19 +717,13 @@ def main_impl(
             or args.attest_asked_manual_scan
             or args.attest_manual_scan == "__DEPRECATED_FLAG__"
         ):
-            print(
-                json.dumps(
-                    {
-                        "error": "Deprecated boolean attestation flags were provided.",
-                        "hint": "Use text attestations instead so the command can validate what was reviewed.",
-                        "blocked_on_step": "Step 5/6",
-                        "process_steps": EXPORT_REVIEW_PUBLISH_STEPS,
-                        "next_command": CONFIRM_COMMAND_EXAMPLE,
-                    },
-                    indent=2,
-                )
+            emit_blocked_error(
+                "Deprecated boolean attestation flags were provided.",
+                hint="Use text attestations instead so the command can validate what was reviewed.",
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command=CONFIRM_COMMAND_EXAMPLE,
             )
-            sys.exit(1)
         confirm_fn(
             file_path=args.file,
             full_name=args.full_name,

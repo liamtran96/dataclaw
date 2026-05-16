@@ -1,13 +1,66 @@
 """Shared CLI constants and helpers."""
 
-from typing import Any, Mapping
+import logging
+from typing import Any, Mapping, NoReturn
 
+from .. import _json as json
 from ..config import DataClawConfig
 from ..providers import PROVIDERS
 
+logger = logging.getLogger(__name__)
+
+
+class CLIBlockedError(Exception):
+    """Raised when the CLI must stop because a process-gating precondition is not met.
+
+    Caught at the CLI entry point, which prints the structured payload and exits with code 1.
+    """
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__(payload.get("error", ""))
+        self.payload = payload
+
+
+def emit_blocked_error(
+    error: str,
+    *,
+    hint: str | None = None,
+    blocked_on_step: str | None = None,
+    process_steps: Any = None,
+    next_command: str | None = None,
+    **extra: Any,
+) -> NoReturn:
+    """Raise a CLIBlockedError carrying the structured error payload."""
+    payload: dict[str, Any] = {"error": error}
+    if hint is not None:
+        payload["hint"] = hint
+    if blocked_on_step is not None:
+        payload["blocked_on_step"] = blocked_on_step
+    if process_steps is not None:
+        payload["process_steps"] = process_steps
+    if next_command is not None:
+        payload["next_command"] = next_command
+    payload.update(extra)
+    raise CLIBlockedError(payload)
+
+
+def format_elapsed_seconds(seconds: float) -> str:
+    return f"{seconds:.2f}s"
+
 HF_TAG = "dataclaw"
+HF_DATASETS_URL = "https://huggingface.co/datasets"
+HF_JOIN_URL = "https://huggingface.co/join"
+HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens"
 REPO_URL = "https://github.com/peteromallet/dataclaw"
 SKILL_URL = "https://raw.githubusercontent.com/peteromallet/dataclaw/main/.claude/skills/dataclaw/SKILL.md"
+
+
+def hf_dataset_url(repo_id: str) -> str:
+    return f"{HF_DATASETS_URL}/{repo_id}"
+
+
+def hf_browse_tagged_url(tag: str = HF_TAG) -> str:
+    return f"{HF_DATASETS_URL}?other={tag}"
 
 REQUIRED_REVIEW_ATTESTATIONS: dict[str, str] = {
     "asked_full_name": "I asked the user for their full name and scanned for it.",
@@ -167,13 +220,12 @@ def _format_token_count(count: int) -> str:
 
 
 def get_hf_username() -> str | None:
-    try:
-        from huggingface_hub import HfApi
+    from huggingface_hub import HfApi
 
+    try:
         return HfApi().whoami()["name"]
-    except ImportError:
-        return None
-    except (OSError, KeyError, ValueError):
+    except (OSError, KeyError, ValueError) as e:
+        logger.warning("Could not fetch HuggingFace username: %s", e)
         return None
 
 
@@ -205,7 +257,7 @@ def _build_status_next_steps(
     if stage == "auth":
         return (
             [
-                "Before Step 3 - Prep: ask the user for their Hugging Face token. Sign up: https://huggingface.co/join - Create WRITE token: https://huggingface.co/settings/tokens",
+                f"Before Step 3 - Prep: ask the user for their Hugging Face token. Sign up: {HF_JOIN_URL} - Create WRITE token: {HF_TOKEN_SETTINGS_URL}",
                 "Run: hf auth login --token <THEIR_TOKEN> (NEVER run bare hf auth login when automating this with an agent - it hangs)",
                 'Run: dataclaw config --redact "<THEIR_TOKEN>" (so the token gets redacted from exports)',
                 "Step 3 - Prep: run dataclaw prep (to confirm login and get next steps)",
@@ -271,7 +323,7 @@ def _build_status_next_steps(
             "dataclaw export",
         )
 
-    dataset_url = f"https://huggingface.co/datasets/{repo_id}" if repo_id else None
+    dataset_url = hf_dataset_url(repo_id) if repo_id else None
     return (
         [
             f"Done! Dataset is live{f' at {dataset_url}' if dataset_url else ''}. To update later, repeat Steps 3 through 6: dataclaw prep, reconfigure as needed, export locally, confirm, then publish.",

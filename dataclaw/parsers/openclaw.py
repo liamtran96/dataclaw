@@ -7,6 +7,7 @@ from .. import _json as json
 from ..anonymizer import Anonymizer
 from ..export_tasks import ExportSessionTask
 from .common import (
+    apply_tool_result,
     build_prefixed_project_name,
     build_projects_from_index,
     collect_project_sessions,
@@ -260,7 +261,7 @@ def parse_session_file(
                         if isinstance(tool_call_id, str) and tool_call_id:
                             pending_result = pending_tool_results.pop(tool_call_id, None)
                             if pending_result is not None:
-                                _apply_openclaw_tool_result(tool_entry, pending_result)
+                                apply_tool_result(tool_entry, pending_result)
                             else:
                                 pending_tool_uses.setdefault(tool_call_id, []).append(tool_entry)
                         tool_uses.append(tool_entry)
@@ -291,7 +292,7 @@ def parse_session_file(
                 matched_tool_uses = pending_tool_uses.pop(tool_call_id, [])
                 if matched_tool_uses:
                     for tool_use in matched_tool_uses:
-                        _apply_openclaw_tool_result(tool_use, result)
+                        apply_tool_result(tool_use, result)
                 else:
                     pending_tool_results[tool_call_id] = result
 
@@ -350,8 +351,3 @@ def _build_openclaw_tool_result(msg_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _apply_openclaw_tool_result(tool_use: dict[str, Any], result: dict[str, Any]) -> None:
-    if result.get("output"):
-        tool_use["output"] = result["output"]
-    if result.get("status"):
-        tool_use["status"] = result["status"]

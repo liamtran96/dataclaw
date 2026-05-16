@@ -5,8 +5,8 @@ import pytest
 from dataclaw.secrets import (
     _NON_ANON_STRING_KEYS,
     REDACTED,
-    _has_mixed_char_types,
-    _shannon_entropy,
+    has_mixed_char_types,
+    shannon_entropy,
     redact_custom_strings,
     redact_session,
     redact_text,
@@ -15,64 +15,64 @@ from dataclaw.secrets import (
     transform_session,
 )
 
-# --- _shannon_entropy ---
+# --- shannon_entropy ---
 
 
 class TestShannonEntropy:
     def test_empty_string(self):
-        assert _shannon_entropy("") == 0.0
+        assert shannon_entropy("") == 0.0
 
     def test_single_char(self):
-        assert _shannon_entropy("a") == 0.0
+        assert shannon_entropy("a") == 0.0
 
     def test_repeated_char(self):
-        assert _shannon_entropy("aaaa") == 0.0
+        assert shannon_entropy("aaaa") == 0.0
 
     def test_two_equal_chars(self):
         # "ab" -> each has prob 0.5 -> entropy = 1.0
-        assert _shannon_entropy("ab") == pytest.approx(1.0)
+        assert shannon_entropy("ab") == pytest.approx(1.0)
 
     def test_four_distinct_chars(self):
         # "abcd" -> each prob 0.25 -> entropy = 2.0
-        assert _shannon_entropy("abcd") == pytest.approx(2.0)
+        assert shannon_entropy("abcd") == pytest.approx(2.0)
 
     def test_high_entropy_random_string(self):
         # A realistic high-entropy string
         s = "aB3xZ9qR2mK7pL4wN8yJ5tF1hG6"
-        assert _shannon_entropy(s) > 3.5
+        assert shannon_entropy(s) > 3.5
 
     def test_low_entropy_repetitive(self):
         s = "aaabbb"
-        assert _shannon_entropy(s) < 1.5
+        assert shannon_entropy(s) < 1.5
 
 
-# --- _has_mixed_char_types ---
+# --- has_mixed_char_types ---
 
 
 class TestHasMixedCharTypes:
     def test_upper_only(self):
-        assert _has_mixed_char_types("ABCDEF") is False
+        assert has_mixed_char_types("ABCDEF") is False
 
     def test_lower_only(self):
-        assert _has_mixed_char_types("abcdef") is False
+        assert has_mixed_char_types("abcdef") is False
 
     def test_digit_only(self):
-        assert _has_mixed_char_types("123456") is False
+        assert has_mixed_char_types("123456") is False
 
     def test_upper_lower_no_digit(self):
-        assert _has_mixed_char_types("AbCdEf") is False
+        assert has_mixed_char_types("AbCdEf") is False
 
     def test_upper_digit_no_lower(self):
-        assert _has_mixed_char_types("ABC123") is False
+        assert has_mixed_char_types("ABC123") is False
 
     def test_lower_digit_no_upper(self):
-        assert _has_mixed_char_types("abc123") is False
+        assert has_mixed_char_types("abc123") is False
 
     def test_mixed_all_three(self):
-        assert _has_mixed_char_types("aB3xZ9") is True
+        assert has_mixed_char_types("aB3xZ9") is True
 
     def test_empty_string(self):
-        assert _has_mixed_char_types("") is False
+        assert has_mixed_char_types("") is False
 
 
 # --- scan_text ---
@@ -205,8 +205,8 @@ class TestScanText:
         # Quoted string with high entropy, mixed chars, no dots, >= 40 chars
         s = "aB3xZ9qR2mK7pL4wN8yJ5tF1hG6cD0eW2vU8iOkX"
         assert len(s) >= 40
-        assert _has_mixed_char_types(s)
-        assert _shannon_entropy(s) >= 3.5
+        assert has_mixed_char_types(s)
+        assert shannon_entropy(s) >= 3.5
         assert s.count(".") <= 2
         text = f'key = "{s}"'
         findings = scan_text(text)

@@ -174,8 +174,8 @@ ALLOWLIST = [
     re.compile(r"@users\.noreply\.github\.com"),
     re.compile(r"AKIA\["),  # regex patterns about AWS keys
     re.compile(r"sk-ant-\.\*"),  # regex patterns about API keys
-    re.compile(r"postgres://user:pass@"),  # example/documentation URLs
-    re.compile(r"postgres://username:password@"),
+    re.compile(r"postgres://user:pass@"),  # example/documentation URLs  # nosec B105
+    re.compile(r"postgres://username:password@"),  # nosec B105
     re.compile(r"@pytest"),  # Python decorator false positives
     re.compile(r"@tasks\."),
     re.compile(r"@mcp\."),
@@ -257,7 +257,7 @@ def summarize_large_binary_value(value: Any) -> Any:
     return value
 
 
-def _shannon_entropy(s: str) -> float:
+def shannon_entropy(s: str) -> float:
     """Higher values indicate more random-looking strings."""
     if not s:
         return 0.0
@@ -268,7 +268,7 @@ def _shannon_entropy(s: str) -> float:
     return -sum((count / length) * math.log2(count / length) for count in freq.values())
 
 
-def _has_mixed_char_types(s: str) -> bool:
+def has_mixed_char_types(s: str) -> bool:
     """Check if string has a mix of uppercase, lowercase, and digits."""
     has_upper = any(c.isupper() for c in s)
     has_lower = any(c.islower() for c in s)
@@ -416,9 +416,9 @@ def scan_text(text: str) -> list[dict]:
             # For high_entropy, verify string actually looks like a secret
             if name == "high_entropy":
                 inner = matched_text[1:-1]  # strip quotes
-                if not _has_mixed_char_types(inner):
+                if not has_mixed_char_types(inner):
                     continue
-                if _shannon_entropy(inner) < 3.5:
+                if shannon_entropy(inner) < 3.5:
                     continue
                 if inner.count(".") > 2:
                     continue

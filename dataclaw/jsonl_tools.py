@@ -7,7 +7,7 @@ import hashlib
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from collections import Counter, deque
 from collections.abc import Callable, Iterable
@@ -454,11 +454,12 @@ def run_jd_patch(old_obj: Any, new_obj: Any) -> list[dict[str, Any]]:
         new_path = temp_path / "new.json"
         old_path.write_bytes(canonical_record_bytes(old_obj))
         new_path.write_bytes(canonical_record_bytes(new_obj))
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             [jd, "-f", "patch", str(old_path), str(new_path)],
             capture_output=True,
             text=True,
             check=False,
+            timeout=60,
         )
     if result.returncode not in {0, 1}:
         raise RuntimeError(result.stderr.strip() or "jd failed")

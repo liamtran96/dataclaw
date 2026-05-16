@@ -8,6 +8,7 @@ from ..anonymizer import Anonymizer
 from ..export_tasks import ExportSessionTask
 from ..secrets import should_skip_large_binary_string
 from .common import (
+    apply_tool_result,
     collect_project_sessions,
     count_existing_paths_and_sizes,
     iter_jsonl,
@@ -425,14 +426,15 @@ def merge_tool_result_raw(raw_content: Any, raw_result: dict[str, Any] | None) -
     return {"content": raw_content, "toolUseResult": raw_result}
 
 
-def parse_session_file(
-    filepath: Path,
-    anonymizer: Anonymizer,
-    include_thinking: bool = True,
-) -> dict | None:
+def _parse_claude_entries(entries_iter, session_id: str, include_thinking: bool) -> dict | None:
+    """Run the shared metadata/pending/stats accumulator over a stream of claude JSONL entries.
+
+    Returns a None-on-OSError, otherwise a make_session_result-shaped dict.
+    Used by both parse_session_file (root JSONL) and parse_subagent_session (subagent merged stream).
+    """
     messages: list[dict[str, Any]] = []
     metadata = {
-        "session_id": filepath.stem,
+        "session_id": session_id,
         "git_branch": None,
         "claude_version": None,
         "model": None,
@@ -444,8 +446,10 @@ def parse_session_file(
     pending_tool_uses: dict[str, list[dict[str, Any]]] = {}
 
     try:
-        for entry in iter_jsonl(filepath):
-            process_entry(
+        saw_entry = False
+        for entry in entries_iter:
+            saw_entry = True
+            apply_claude_entry(
                 entry,
                 messages,
                 metadata,
@@ -457,7 +461,18 @@ def parse_session_file(
     except OSError:
         return None
 
-    return make_session_result(metadata, messages, stats)
+    return {"metadata": metadata, "messages": messages, "stats": stats, "saw_entry": saw_entry}
+
+
+def parse_session_file(
+    filepath: Path,
+    anonymizer: Anonymizer,
+    include_thinking: bool = True,
+) -> dict | None:
+    parsed = _parse_claude_entries(iter_jsonl(filepath), filepath.stem, include_thinking)
+    if parsed is None:
+        return None
+    return make_session_result(parsed["metadata"], parsed["messages"], parsed["stats"])
 
 
 def find_subagent_sessions(project_dir: Path) -> list[Path]:
@@ -492,40 +507,15 @@ def parse_subagent_session(
     if not subagent_files:
         return None
 
-    messages: list[dict[str, Any]] = []
-    metadata = {
-        "session_id": session_dir.name,
-        "git_branch": None,
-        "claude_version": None,
-        "model": None,
-        "start_time": None,
-        "end_time": None,
-    }
-    stats = make_stats()
-    pending_tool_results: dict[str, dict[str, Any]] = {}
-    pending_tool_uses: dict[str, list[dict[str, Any]]] = {}
-
-    try:
-        saw_entry = False
-        for entry in iter_sorted_subagent_entries(subagent_files):
-            saw_entry = True
-            process_entry(
-                entry,
-                messages,
-                metadata,
-                stats,
-                include_thinking,
-                pending_tool_results=pending_tool_results,
-                pending_tool_uses=pending_tool_uses,
-            )
-    except OSError:
+    parsed = _parse_claude_entries(
+        iter_sorted_subagent_entries(subagent_files), session_dir.name, include_thinking
+    )
+    if parsed is None or not parsed["saw_entry"]:
         return None
 
-    if not saw_entry:
-        return None
-
+    metadata = parsed["metadata"]
     metadata["session_id"] = resolve_subagent_session_id(session_dir, metadata["session_id"])
-    return make_session_result(metadata, messages, stats)
+    return make_session_result(metadata, parsed["messages"], parsed["stats"])
 
 
 def resolve_subagent_session_id(session_dir: Path, session_id: str) -> str:
@@ -558,7 +548,7 @@ def iter_sorted_subagent_entries(subagent_files: list[Path]) -> Iterator[dict[st
             heapq.heappush(heap, (_entry_sort_timestamp(next_entry), file_index, next_entry, entries))
 
 
-def process_entry(
+def apply_claude_entry(
     entry: dict[str, Any],
     messages: list[dict[str, Any]],
     metadata: dict[str, Any],
@@ -660,11 +650,11 @@ def extract_assistant_content(
             if tool_result_map is not None:
                 result = tool_result_map.get(tool_use_id or "")
                 if result:
-                    _apply_claude_tool_result(tu, result)
+                    apply_tool_result(tu, result)
             elif isinstance(tool_use_id, str) and tool_use_id:
                 pending_result = None if pending_tool_results is None else pending_tool_results.pop(tool_use_id, None)
                 if pending_result is not None:
-                    _apply_claude_tool_result(tu, pending_result)
+                    apply_tool_result(tu, pending_result)
                 elif pending_tool_uses is not None:
                     pending_tool_uses.setdefault(tool_use_id, []).append(tu)
             tool_uses.append(tu)
@@ -680,13 +670,6 @@ def extract_assistant_content(
     if tool_uses:
         msg["tool_uses"] = tool_uses
     return msg
-
-
-def _apply_claude_tool_result(tool_use: dict[str, Any], result: dict[str, Any]) -> None:
-    if result.get("output"):
-        tool_use["output"] = result["output"]
-    if result.get("status"):
-        tool_use["status"] = result["status"]
 
 
 def _attach_claude_tool_results(
@@ -715,7 +698,7 @@ def _attach_claude_tool_results(
         matched_tool_uses = [] if pending_tool_uses is None else pending_tool_uses.pop(tool_use_id, [])
         if matched_tool_uses:
             for tool_use in matched_tool_uses:
-                _apply_claude_tool_result(tool_use, result)
+                apply_tool_result(tool_use, result)
         elif pending_tool_results is not None:
             pending_tool_results[tool_use_id] = result
 
