@@ -21,6 +21,10 @@ class LastExport(TypedDict, total=False):
     timestamp: str
     sessions: int
     bytes: int
+    redact_strings_fingerprint: str
+    redact_strings_count: int
+    redact_usernames_fingerprint: str
+    redact_usernames_count: int
 
 
 class ReviewAttestations(TypedDict, total=False):
@@ -29,6 +33,9 @@ class ReviewAttestations(TypedDict, total=False):
     asked_full_name: str
     asked_sensitive_entities: str
     manual_scan_done: str
+    accepted_full_name_matches: str
+    accepted_session_shrink: str
+    accepted_redaction_drift: str
 
 
 class ReviewVerification(TypedDict, total=False):
@@ -37,6 +44,9 @@ class ReviewVerification(TypedDict, total=False):
     full_name: str
     full_name_scan_skipped: bool
     manual_scan_sessions: int
+    full_name_matches_accepted: str
+    session_shrink_accepted: str
+    redaction_drift_accepted: str
 
 
 class LastConfirm(TypedDict, total=False):
@@ -44,6 +54,8 @@ class LastConfirm(TypedDict, total=False):
 
     file: str
     timestamp: str
+    sha256: str
+    size_bytes: int
 
 
 class DataClawConfig(TypedDict, total=False):

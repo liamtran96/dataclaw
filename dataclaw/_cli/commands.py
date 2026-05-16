@@ -35,9 +35,11 @@ from .common import (
     _source_scope_placeholder,
     default_repo_name,
     emit_blocked_error,
+    fingerprint_strings,
     format_elapsed_seconds,
     get_hf_username,
     hf_dataset_url,
+    sha256_file,
 )
 from .review import (
     _build_pii_commands,
@@ -331,6 +333,50 @@ def run_export(
                 next_command="dataclaw export --no-push --output dataclaw_export.jsonl",
             )
 
+        recorded_sha256 = last_confirm.get("sha256")
+        recorded_size = last_confirm.get("size_bytes")
+        if not recorded_sha256 or not isinstance(recorded_size, int):
+            emit_blocked_error(
+                "Confirmed export file has no recorded fingerprint.",
+                hint=(
+                    "Your config predates the content-integrity check. Re-run "
+                    "`dataclaw confirm --file <path> ...` to record a fingerprint, then push again."
+                ),
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw confirm",
+            )
+
+        current_size = confirmed_file.stat().st_size
+        if current_size != recorded_size:
+            emit_blocked_error(
+                "Confirmed export file size has changed since `dataclaw confirm`.",
+                hint=(
+                    "The file at the recorded path is not the file you confirmed. Re-run "
+                    "`dataclaw confirm --file <path> ...` to re-review the current contents."
+                ),
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw confirm",
+                expected_size_bytes=recorded_size,
+                actual_size_bytes=current_size,
+            )
+
+        current_sha256 = sha256_file(confirmed_file)
+        if current_sha256 != recorded_sha256:
+            emit_blocked_error(
+                "Confirmed export file contents have changed since `dataclaw confirm`.",
+                hint=(
+                    "The bytes at the recorded path no longer match what was reviewed. Re-run "
+                    "`dataclaw confirm --file <path> ...` to re-review the current contents before publishing."
+                ),
+                blocked_on_step="Step 5/6",
+                process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+                next_command="dataclaw confirm",
+                expected_sha256=recorded_sha256,
+                actual_sha256=current_sha256,
+            )
+
     if confirmed_file is None and not source_explicit:
         emit_blocked_error(
             "Source scope is not confirmed yet.",
@@ -503,10 +549,16 @@ def run_export(
 
     _print_pii_guidance(output_path, REPO_URL)
 
+    redact_strings_list = config.get("redact_strings", []) or []
+    redact_usernames_list = config.get("redact_usernames", []) or []
     config["last_export"] = {
         "timestamp": meta["exported_at"],
         "sessions": meta["sessions"],
         "source": source_choice,
+        "redact_strings_fingerprint": fingerprint_strings(redact_strings_list),
+        "redact_strings_count": len(redact_strings_list),
+        "redact_usernames_fingerprint": fingerprint_strings(redact_usernames_list),
+        "redact_usernames_count": len(redact_usernames_list),
     }
     if args.no_push:
         config["stage"] = "review"
@@ -684,6 +736,24 @@ def main_impl(
         default=None,
         help=f"Text attestation describing manual scan ({MIN_MANUAL_SCAN_SESSIONS}+ sessions).",
     )
+    cf.add_argument(
+        "--accept-full-name-matches",
+        type=str,
+        default=None,
+        help="Text attestation explicitly accepting that full-name scan matches will be published.",
+    )
+    cf.add_argument(
+        "--accept-session-shrink",
+        type=str,
+        default=None,
+        help="Text attestation explicitly accepting that this export has fewer sessions than the previous one.",
+    )
+    cf.add_argument(
+        "--accept-redaction-drift",
+        type=str,
+        default=None,
+        help="Text attestation explicitly accepting that the redaction list shrank since the previous export.",
+    )
     cf.add_argument("--attest-asked-full-name", action="store_true", help=argparse.SUPPRESS)
     cf.add_argument("--attest-asked-sensitive", action="store_true", help=argparse.SUPPRESS)
     cf.add_argument("--attest-asked-manual-scan", action="store_true", help=argparse.SUPPRESS)
@@ -731,6 +801,9 @@ def main_impl(
             attest_asked_sensitive=args.attest_sensitive,
             attest_manual_scan=args.attest_manual_scan,
             skip_full_name_scan=args.skip_full_name_scan,
+            accept_full_name_matches=args.accept_full_name_matches,
+            accept_session_shrink=args.accept_session_shrink,
+            accept_redaction_drift=args.accept_redaction_drift,
         )
         return
     if command == "update-skill":

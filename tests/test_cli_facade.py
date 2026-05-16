@@ -182,6 +182,8 @@ class TestWorkflowGateMessages:
         export_file = tmp_path / "confirmed.jsonl"
         export_file.write_text('{"project":"p","model":"m","stats":{"input_tokens":1,"output_tokens":2}}\n')
 
+        from dataclaw._cli.common import sha256_file
+
         saved = {}
         pushed = {}
 
@@ -190,7 +192,11 @@ class TestWorkflowGateMessages:
             lambda: {
                 "stage": "confirmed",
                 "repo": "alice/repo",
-                "last_confirm": {"file": str(export_file)},
+                "last_confirm": {
+                    "file": str(export_file),
+                    "sha256": sha256_file(export_file),
+                    "size_bytes": export_file.stat().st_size,
+                },
                 "review_attestations": {
                     "asked_full_name": "User declined to share full name; skipped exact-name scan.",
                     "asked_sensitive_entities": "I asked about company, client, internal names, and URLs; none required extra redaction.",

@@ -565,6 +565,16 @@ def transform_session(
     total = 0
     effective_non_anon_string_keys = _NON_ANON_STRING_KEYS | frozenset(non_anon_string_keys or ())
 
+    # Project labels are intentionally kept in non_anon_string_keys so they're stable identifiers,
+    # but the label is constructed from cwd basenames that can contain the user's username
+    # (e.g. `/Users/alice` -> "claude:alice"). Run the label through the anonymizer's text rewrite
+    # so usernames embedded in the label get hashed; non-username basenames pass through unchanged.
+    project_label = session.get("project")
+    if isinstance(project_label, str) and project_label:
+        anonymized_label = anonymizer.text(project_label)
+        if anonymized_label != project_label:
+            session["project"] = anonymized_label
+
     for msg in session.get("messages", []):
         for field in ("content", "thinking"):
             if msg.get(field):

@@ -294,6 +294,9 @@ class TestConfirmStreaming:
                 "none were sensitive and no extra redactions were needed."
             ),
             attest_manual_scan="I performed a manual scan and reviewed 20 sessions across beginning, middle, and end.",
+            accept_full_name_matches=(
+                "Jane reviewed each match in person; the appearances are intentional and approved."
+            ),
             load_config_fn=lambda: {},
             save_config_fn=lambda cfg: saved_config.update(cfg),
         )
@@ -303,5 +306,7 @@ class TestConfirmStreaming:
         assert payload["total_sessions"] == 2
         assert payload["full_name_scan"]["match_count"] == 1
         assert payload["pii_scan"]["emails"] == ["jane@example.com"]
-        assert open_calls == 1
+        # Two opens: one for the scan pass, one for the streamed sha256 of the confirmed file.
+        assert open_calls == 2
         assert saved_config["stage"] == "confirmed"
+        assert "sha256" in saved_config["last_confirm"]

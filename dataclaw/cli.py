@@ -74,6 +74,9 @@ def confirm(
     attest_asked_sensitive: str | None = None,
     attest_manual_scan: str | None = None,
     skip_full_name_scan: bool = False,
+    accept_full_name_matches: str | None = None,
+    accept_session_shrink: str | None = None,
+    accept_redaction_drift: str | None = None,
 ) -> None:
     review.confirm(
         file_path=file_path,
@@ -82,6 +85,9 @@ def confirm(
         attest_asked_sensitive=attest_asked_sensitive,
         attest_manual_scan=attest_manual_scan,
         skip_full_name_scan=skip_full_name_scan,
+        accept_full_name_matches=accept_full_name_matches,
+        accept_session_shrink=accept_session_shrink,
+        accept_redaction_drift=accept_redaction_drift,
         load_config_fn=load_config,
         save_config_fn=save_config,
     )

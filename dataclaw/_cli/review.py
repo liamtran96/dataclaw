@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,8 @@ from .common import (
     REQUIRED_REVIEW_ATTESTATIONS,
     _format_size,
     emit_blocked_error,
+    fingerprint_strings,
+    sha256_file,
 )
 
 _PII_SCANS = {
@@ -193,6 +196,56 @@ def _format_occurrence_excerpt(line: str, max_len: int = 220) -> str:
     return excerpt
 
 
+def _nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+def _strip_diacritics(text: str) -> str:
+    """NFD-decompose, drop combining marks, collapse to NFC. Lossy by design."""
+    nfd = unicodedata.normalize("NFD", text)
+    return unicodedata.normalize("NFC", "".join(c for c in nfd if unicodedata.category(c) != "Mn"))
+
+
+def _build_full_name_patterns(query: str | None) -> tuple[re.Pattern[str] | None, re.Pattern[str] | None]:
+    """Return (nfc_pattern, stripped_pattern). Empty / None query → (None, None)."""
+    if not query:
+        return None, None
+    nfc_query = _nfc(query)
+    stripped_query = _strip_diacritics(nfc_query)
+    nfc_pat = re.compile(re.escape(nfc_query), re.IGNORECASE)
+    # Only build the stripped pattern when it actually differs — avoids double-counting matches
+    # for queries that contain no diacritics.
+    stripped_pat: re.Pattern[str] | None = None
+    if stripped_query and stripped_query != nfc_query:
+        stripped_pat = re.compile(re.escape(stripped_query), re.IGNORECASE)
+    return nfc_pat, stripped_pat
+
+
+def _record_full_name_occurrence(
+    line_no: int,
+    line: str,
+    nfc_pattern: re.Pattern[str] | None,
+    stripped_pattern: re.Pattern[str] | None,
+    examples: list[dict[str, object]],
+    *,
+    max_examples: int,
+) -> int:
+    """Return 1 if the line matches the name in either NFC or diacritics-stripped form, else 0."""
+    if nfc_pattern is None and stripped_pattern is None:
+        return 0
+    nfc_line = _nfc(line)
+    matched = False
+    if nfc_pattern is not None and nfc_pattern.search(nfc_line):
+        matched = True
+    elif stripped_pattern is not None and stripped_pattern.search(_strip_diacritics(nfc_line)):
+        matched = True
+    if not matched:
+        return 0
+    if len(examples) < max_examples:
+        examples.append({"line": line_no, "excerpt": _format_occurrence_excerpt(line)})
+    return 1
+
+
 def _record_text_occurrence(
     line_no: int,
     line: str,
@@ -259,7 +312,7 @@ def _plan_review_chunks(file_path: Path, workers: int) -> list[tuple[int, int, i
 
 def _scan_review_chunk(payload: tuple[str, int, int, int, str | None, int]) -> dict:
     file_path_str, start_offset, end_offset, start_line, full_name_query, max_examples = payload
-    full_name_pattern = re.compile(re.escape(full_name_query), re.IGNORECASE) if full_name_query else None
+    nfc_pattern, stripped_pattern = _build_full_name_patterns(full_name_query)
     matches_by_scan: dict[str, set[str]] = {name: set() for name in _PII_SCANS}
     high_entropy_matches: dict[str, dict] = {}
     full_name_matches = 0
@@ -277,11 +330,12 @@ def _scan_review_chunk(payload: tuple[str, int, int, int, str | None, int]) -> d
                 break
             line = raw_line.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
-            if full_name_pattern is not None:
-                full_name_matches += _record_text_occurrence(
+            if nfc_pattern is not None or stripped_pattern is not None:
+                full_name_matches += _record_full_name_occurrence(
                     line_no,
                     line,
-                    full_name_pattern,
+                    nfc_pattern,
+                    stripped_pattern,
                     full_name_examples,
                     max_examples=max_examples,
                 )
@@ -364,9 +418,7 @@ def _merge_review_chunk_results(
 
 
 def _scan_export_review_serial(file_path: Path, full_name_query: str | None = None, max_examples: int = 5) -> dict:
-    full_name_pattern = None
-    if full_name_query:
-        full_name_pattern = re.compile(re.escape(full_name_query), re.IGNORECASE)
+    nfc_pattern, stripped_pattern = _build_full_name_patterns(full_name_query)
 
     matches_by_scan: dict[str, set[str]] = {name: set() for name in _PII_SCANS}
     high_entropy_matches: dict[str, dict] = {}
@@ -378,11 +430,12 @@ def _scan_export_review_serial(file_path: Path, full_name_query: str | None = No
 
     with open(file_path) as f:
         for line_no, line in enumerate(f, start=1):
-            if full_name_pattern is not None:
-                full_name_matches += _record_text_occurrence(
+            if nfc_pattern is not None or stripped_pattern is not None:
+                full_name_matches += _record_full_name_occurrence(
                     line_no,
                     line,
-                    full_name_pattern,
+                    nfc_pattern,
+                    stripped_pattern,
                     full_name_examples,
                     max_examples=max_examples,
                 )
@@ -406,7 +459,7 @@ def _scan_export_review_serial(file_path: Path, full_name_query: str | None = No
         "models": models,
         "pii_scan": _finalize_pii_results(matches_by_scan, high_entropy_matches),
     }
-    if full_name_pattern is not None:
+    if nfc_pattern is not None or stripped_pattern is not None:
         result["full_name_scan"] = {
             "query": full_name_query,
             "match_count": full_name_matches,
@@ -541,6 +594,34 @@ def _validate_publish_attestation(attestation: object) -> tuple[str, str | None]
     return normalized, None
 
 
+_SESSION_SHRINK_RELATIVE_THRESHOLD = 0.05  # 5%
+_SESSION_SHRINK_SMALL_PRIOR_THRESHOLD = 20  # below this, any decrease blocks
+
+
+def _validate_acceptance_attestation(text: str | None, flag_name: str) -> tuple[str | None, str | None]:
+    """Normalize an --accept-* attestation; return (normalized, error_or_None)."""
+    if text is None:
+        return None, None
+    normalized = _normalize_attestation_text(text)
+    if not normalized:
+        return None, f"{flag_name} attestation cannot be empty."
+    if len(normalized) < MIN_ATTESTATION_CHARS:
+        return (
+            None,
+            f"{flag_name} attestation must be at least {MIN_ATTESTATION_CHARS} characters (got {len(normalized)}).",
+        )
+    return normalized, None
+
+
+def _session_shrink_blocks(previous: int, current: int) -> bool:
+    """Decide whether a drop in session count is large enough to block confirm."""
+    if previous <= 0 or current >= previous:
+        return False
+    if previous <= _SESSION_SHRINK_SMALL_PRIOR_THRESHOLD:
+        return True
+    return (previous - current) / previous >= _SESSION_SHRINK_RELATIVE_THRESHOLD
+
+
 def confirm(
     file_path: Path | None = None,
     full_name: str | None = None,
@@ -548,6 +629,9 @@ def confirm(
     attest_asked_sensitive: str | None = None,
     attest_manual_scan: str | None = None,
     skip_full_name_scan: bool = False,
+    accept_full_name_matches: str | None = None,
+    accept_session_shrink: str | None = None,
+    accept_redaction_drift: str | None = None,
     *,
     load_config_fn,
     save_config_fn,
@@ -580,6 +664,34 @@ def confirm(
             blocked_on_step="Step 5/6",
             process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
             next_command=CONFIRM_COMMAND_SKIP_FULL_NAME_EXAMPLE,
+        )
+
+    # Validate accept-* attestations early so we can short-circuit with clear errors.
+    accept_full_name_matches_norm, fn_err = _validate_acceptance_attestation(
+        accept_full_name_matches, "--accept-full-name-matches"
+    )
+    accept_session_shrink_norm, ss_err = _validate_acceptance_attestation(
+        accept_session_shrink, "--accept-session-shrink"
+    )
+    accept_redaction_drift_norm, rd_err = _validate_acceptance_attestation(
+        accept_redaction_drift, "--accept-redaction-drift"
+    )
+    acceptance_errors = {
+        key: msg
+        for key, msg in (
+            ("accept_full_name_matches", fn_err),
+            ("accept_session_shrink", ss_err),
+            ("accept_redaction_drift", rd_err),
+        )
+        if msg
+    }
+    if acceptance_errors:
+        emit_blocked_error(
+            "Invalid acceptance attestation.",
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
+            acceptance_errors=acceptance_errors,
         )
 
     attestations, attestation_errors, manual_scan_sessions = _collect_review_attestations(
@@ -625,21 +737,128 @@ def confirm(
     models = review_scan["models"]
     total = review_scan["total_sessions"]
 
+    # Gate: full-name scan matches must be explicitly accepted.
+    full_name_match_count = int(full_name_scan.get("match_count") or 0)
+    if full_name_match_count > 0 and not accept_full_name_matches_norm:
+        emit_blocked_error(
+            f"Full-name scan found {full_name_match_count} match(es). Confirm is blocked.",
+            hint=(
+                "Two ways forward: (a) redact the matches with `dataclaw config --redact \"...\"` "
+                "then re-export with `dataclaw export --no-push` and re-run confirm; OR "
+                "(b) re-run confirm with `--accept-full-name-matches \"<reason this is acceptable to publish>\"`."
+            ),
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
+            full_name_scan=full_name_scan,
+        )
+
+    # Gate: session-count shrink vs previous export must be explicitly accepted.
+    previous_sessions = int(last_export.get("sessions") or 0)
+    shrink_blocks = _session_shrink_blocks(previous_sessions, total)
+    if shrink_blocks and not accept_session_shrink_norm:
+        delta = previous_sessions - total
+        delta_pct = (delta / previous_sessions) if previous_sessions else 0.0
+        emit_blocked_error(
+            f"This export has {total} sessions; the previous export had {previous_sessions} ({delta} fewer).",
+            hint=(
+                "If source session directories were intentionally cleaned, re-run with "
+                "`--accept-session-shrink \"<reason for the drop>\"`. Otherwise investigate why sessions "
+                "are missing before publishing."
+            ),
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
+            shrink_warning={
+                "previous_sessions": previous_sessions,
+                "current_sessions": total,
+                "delta": delta,
+                "delta_pct": round(delta_pct, 4),
+            },
+        )
+
+    # Gate: redaction-policy loosening (entries removed) must be explicitly accepted.
+    redact_strings = config.get("redact_strings", []) or []
+    redact_usernames = config.get("redact_usernames", []) or []
+    current_strings_fp = fingerprint_strings(redact_strings)
+    current_usernames_fp = fingerprint_strings(redact_usernames)
+    current_strings_count = len(redact_strings)
+    current_usernames_count = len(redact_usernames)
+
+    prev_strings_fp = last_export.get("redact_strings_fingerprint")
+    prev_usernames_fp = last_export.get("redact_usernames_fingerprint")
+    prev_strings_count = int(last_export.get("redact_strings_count") or 0)
+    prev_usernames_count = int(last_export.get("redact_usernames_count") or 0)
+
+    strings_drifted = (
+        prev_strings_fp is not None
+        and prev_strings_fp != current_strings_fp
+        and current_strings_count < prev_strings_count
+    )
+    usernames_drifted = (
+        prev_usernames_fp is not None
+        and prev_usernames_fp != current_usernames_fp
+        and current_usernames_count < prev_usernames_count
+    )
+    if (strings_drifted or usernames_drifted) and not accept_redaction_drift_norm:
+        emit_blocked_error(
+            "Redaction list shrank since the previous export — confirm is blocked.",
+            hint=(
+                "Adding redactions tightens privacy and is safe. Removing them loosens it. "
+                "If the removal is intentional, re-run with "
+                "`--accept-redaction-drift \"<reason for the removal>\"`. Otherwise restore the entry "
+                "via `dataclaw config --redact \"...\"` or `--redact-usernames \"...\"` before continuing."
+            ),
+            blocked_on_step="Step 5/6",
+            process_steps=EXPORT_REVIEW_PUBLISH_STEPS,
+            next_command=CONFIRM_COMMAND_EXAMPLE,
+            redaction_drift_warning={
+                "redact_strings": {
+                    "previous_count": prev_strings_count,
+                    "current_count": current_strings_count,
+                    "shrunk": strings_drifted,
+                },
+                "redact_usernames": {
+                    "previous_count": prev_usernames_count,
+                    "current_count": current_usernames_count,
+                    "shrunk": usernames_drifted,
+                },
+            },
+        )
+
+    # All gates cleared. Hash the file so we can detect modification before publish.
+    confirmed_sha256 = sha256_file(file_path)
+
     config["stage"] = "confirmed"
+    if accept_full_name_matches_norm:
+        attestations["accepted_full_name_matches"] = accept_full_name_matches_norm
+    if accept_session_shrink_norm:
+        attestations["accepted_session_shrink"] = accept_session_shrink_norm
+    if accept_redaction_drift_norm:
+        attestations["accepted_redaction_drift"] = accept_redaction_drift_norm
     config["review_attestations"] = attestations
-    config["review_verification"] = {
+    review_verification = {
         "full_name": normalized_full_name if not skip_full_name_scan else None,
         "full_name_scan_skipped": skip_full_name_scan,
-        "full_name_matches": full_name_scan.get("match_count", 0),
+        "full_name_matches": full_name_match_count,
         "manual_scan_sessions": manual_scan_sessions,
     }
+    if accept_full_name_matches_norm:
+        review_verification["full_name_matches_accepted"] = accept_full_name_matches_norm
+    if accept_session_shrink_norm:
+        review_verification["session_shrink_accepted"] = accept_session_shrink_norm
+    if accept_redaction_drift_norm:
+        review_verification["redaction_drift_accepted"] = accept_redaction_drift_norm
+    config["review_verification"] = review_verification
     config["last_confirm"] = {
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "file": str(file_path.resolve()),
+        "sha256": confirmed_sha256,
+        "size_bytes": file_size,
         "pii_findings": bool(pii_findings),
         "full_name": normalized_full_name if not skip_full_name_scan else None,
         "full_name_scan_skipped": skip_full_name_scan,
-        "full_name_matches": full_name_scan.get("match_count", 0),
+        "full_name_matches": full_name_match_count,
         "manual_scan_sessions": manual_scan_sessions,
     }
     save_config_fn(config)

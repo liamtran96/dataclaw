@@ -1,6 +1,9 @@
 """Shared CLI constants and helpers."""
 
+import hashlib
 import logging
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, Mapping, NoReturn
 
 from .. import _json as json
@@ -8,6 +11,34 @@ from ..config import DataClawConfig
 from ..providers import PROVIDERS
 
 logger = logging.getLogger(__name__)
+
+_HASH_READ_CHUNK = 1024 * 1024  # 1 MiB
+
+
+def sha256_file(path: Path) -> str:
+    """Stream a file through SHA-256 and return the hex digest.
+
+    Used to fingerprint a confirmed export so we can detect modification
+    between `confirm` and `publish`.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(_HASH_READ_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fingerprint_strings(values: Iterable[str]) -> str:
+    """Stable SHA-256 fingerprint of a string collection.
+
+    Used to detect when a redaction list shrinks (loosens) between exports
+    without storing the list contents (which could themselves be sensitive).
+    """
+    h = hashlib.sha256()
+    for value in sorted(values):
+        h.update(value.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
 
 
 class CLIBlockedError(Exception):
